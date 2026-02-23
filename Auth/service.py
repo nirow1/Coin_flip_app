@@ -1,4 +1,5 @@
 from sqlalchemy import select
+from datetime import date
 from Core.security import hash_password, verify_password, create_access_token
 from Auth.models import User
 from Auth.schemas import RegisterRequest, LoginRequest, UserResponse, TokenResponse
@@ -6,13 +7,29 @@ from Auth.schemas import RegisterRequest, LoginRequest, UserResponse, TokenRespo
 class AuthService:
 
     @staticmethod
+    def _calculate_age(dob: date) -> int:
+        """Calculate age from date of birth"""
+        today = date.today()
+        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        return age
+
+    @staticmethod
     async def register_user(data: RegisterRequest, session):
-        # check if email exists
+        # Validate age (must be 18+)
+        age = AuthService._calculate_age(data.dob)
+        if age < 18:
+            raise ValueError("You must be at least 18 years old to register")
+
+        # Check if date of birth is in the future
+        if data.dob > date.today():
+            raise ValueError("Date of birth cannot be in the future")
+
+        # Check if email exists
         existing = await session.execute(select(User).where(User.email == data.email))
         if existing.scalar_one_or_none():
             raise ValueError("Email already registered")
 
-        # create user
+        # Create user
         user = User(
             email=data.email,
             username=None,
@@ -25,6 +42,9 @@ class AuthService:
         await session.commit()
         await session.refresh(user)
 
+        # TODO: Create wallet for user
+        # await WalletService.create_wallet(user.id, session)
+
         return UserResponse(
             id=user.id,
             email=user.email,
@@ -34,14 +54,20 @@ class AuthService:
 
     @staticmethod
     async def login_user(data: LoginRequest, session):
-        # find user
+        # Find user
         result = await session.execute(select(User).where(User.email == data.email))
         user = result.scalar_one_or_none()
 
-        if not user or not verify_password(data.password, user.password_hash):
+        # Use consistent error message to prevent email enumeration attacks
+        if not user:
+            # Still hash the password to prevent timing attacks
+            hash_password(data.password)
             raise ValueError("Invalid email or password")
 
-        # create JWT
+        if not verify_password(data.password, user.password_hash):
+            raise ValueError("Invalid email or password")
+
+        # Create JWT with user ID
         token = create_access_token({"sub": str(user.id)})
 
         return TokenResponse(access_token=token)

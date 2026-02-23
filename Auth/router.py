@@ -10,5 +10,6 @@ router  = APIRouter()
 async def register(request: RegisterRequest, session=Depends(get_session)):
     return await AuthService.register_user(request, session)
 
+@router.post("/login")
 async def login(request: LoginRequest, session=Depends(get_session)):
     return await AuthService.login_user(request, session)
