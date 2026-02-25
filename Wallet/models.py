@@ -1,6 +1,8 @@
-from sqlalchemy import Column, Integer, ForeignKey, Numeric, DateTime, func, String
+from sqlalchemy import Column, Integer, ForeignKey, Numeric, DateTime, func, Enum
 from sqlalchemy.orm import relationship
 from db import Base
+from Wallet.enums import TransactionType
+
 
 class Wallet(Base):
     __tablename__ = "wallets"
@@ -20,8 +22,7 @@ class Transaction(Base):
     id = Column(Integer, primary_key=True, index=True)
     wallet_id = Column(Integer, ForeignKey("wallets.id"), nullable=False)
     amount = Column(Numeric(12, 2), nullable=False)
-    #todo: The 'type' column lacks constraints to enforce valid transaction types. Consider using an Enum or adding a check constraint to ensure only valid values ('credit', 'debit', 'win', 'purchase', 'refund') can be stored in the database.
-    type = Column(String, nullable=False)  # "credit", "debit", "win", "purchase", "refund"
+    type = Column(Enum(TransactionType), nullable=False)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
     wallet = relationship("Wallet", back_populates="transactions")
