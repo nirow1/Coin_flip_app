@@ -3,7 +3,6 @@ from sqlalchemy import select
 from decimal import Decimal
 from typing import cast
 from Wallet.models import Wallet, Transaction
-from Auth.models import User
 from fastapi import HTTPException, status
 
 
@@ -20,8 +19,11 @@ class WalletService:
         return new_wallet
 
     # Get wallet balance
-    async def get_wallet(self, wallet_id: int) -> Wallet:
-        results = await self.session.execute(select(Wallet).where(Wallet.id == wallet_id))
+    async def get_wallet_for_update(self, user_id: int) -> Wallet:
+        results = await self.session.execute(select(Wallet)
+                                             .where(Wallet.user_id == user_id)
+                                             .with_for_update()
+                                             )
         wallet = results.scalar_one_or_none()
 
         if wallet is None:
@@ -29,7 +31,7 @@ class WalletService:
 
         return wallet
 
-    #get transaction
+    # Get transactions.
     async def get_transactions(self, wallet_id: int) -> list[Transaction]:  # type: ignore[override]
         results = await self.session.execute(
             select(Transaction)
@@ -38,3 +40,26 @@ class WalletService:
         )
         transactions = cast(list[Transaction], results.scalars().all())
         return transactions
+
+    async def _apply_transaction(self, wallet: Wallet, amount: Decimal, transaction_type: str) -> Transaction:
+        new_balance = wallet.balance + amount
+
+        if new_balance < Decimal("0.00"):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient funds")
+
+        wallet.balance = new_balance
+        transaction = Transaction(wallet_id=wallet.id, amount=amount, type=transaction_type)
+
+        self.session.add(transaction)
+        await self.session.commit()
+        await self.session.refresh(transaction)
+        await self.session.refresh(wallet)
+        return transaction
+
+    async def credit(self, user_id: int, amount: Decimal, transaction_type: str = "credit") -> Transaction:
+        wallet = await self.get_wallet_for_update(user_id)
+        return await self._apply_transaction(wallet, amount, transaction_type)
+
+    async def debit(self, user_id: int, amount: Decimal, transaction_type: str = "debit") -> Transaction:
+        wallet = await self.get_wallet_for_update(user_id)
+        return await self._apply_transaction(wallet, -amount, transaction_type)
