@@ -1,11 +1,17 @@
+from email.policy import HTTP
+
 from sqlalchemy import select
 from datetime import date
 from Core.security import hash_password, verify_password, create_access_token
 from Auth.models import User
+from jose import JWTError, jwt
+from fastapi import HTTPException, status
 from Auth.schemas import RegisterRequest, LoginRequest, UserResponse, TokenResponse
 
-class AuthService:
+SECRET_KEY = "your-secret-key" # use your real key
+ALGORITHM = "HS256"
 
+class AuthService:
     @staticmethod
     def _calculate_age(dob: date) -> int:
         """Calculate age from date of birth"""
@@ -53,7 +59,7 @@ class AuthService:
         )
 
     @staticmethod
-    async def login_user(data: LoginRequest, session):
+    async def login_user(data: LoginRequest, session) -> TokenResponse:
         # Find user
         result = await session.execute(select(User).where(User.email == data.email))
         user = result.scalar_one_or_none()
@@ -71,3 +77,12 @@ class AuthService:
         token = create_access_token({"sub": str(user.id)})
 
         return TokenResponse(access_token=token)
+
+    @staticmethod
+    async def get_current_user(token: str, session) -> UserResponse:
+        # Decode token to get user ID
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = int(payload.get("sub"))
+
+        if user_id is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token" )
