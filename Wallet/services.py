@@ -18,7 +18,17 @@ class WalletService:
         await self.session.refresh(new_wallet)
         return new_wallet
 
-    # Get wallet balance
+    # Get wallet (read-only)
+    async def get_wallet(self, user_id: int) -> Wallet:
+        result = await self.session.execute(select(Wallet).where(Wallet.user_id == user_id))
+        wallet = result.scalar_one_or_none()
+
+        if wallet is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Wallet not found")
+
+        return wallet
+
+    # Get wallet with lock (for write operations only)
     async def get_wallet_for_update(self, user_id: int) -> Wallet:
         results = await self.session.execute(select(Wallet)
                                              .where(Wallet.user_id == user_id)

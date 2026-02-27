@@ -1,17 +1,18 @@
-from email.policy import HTTP
+import jwt
+from fastapi.security import OAuth2PasswordBearer
 
-from sqlalchemy import select
-from datetime import date
-from Core.security import hash_password, verify_password, create_access_token
-from Auth.models import User
-from jose import JWTError, jwt
-from fastapi import HTTPException, status
 from Auth.schemas import RegisterRequest, LoginRequest, UserResponse, TokenResponse
-
-SECRET_KEY = "your-secret-key" # use your real key
-ALGORITHM = "HS256"
+from Core.security import hash_password, verify_password, create_access_token
+from fastapi import HTTPException, status
+from sqlalchemy import select
+from Auth.models import User
+from config import settings
+from jwt import PyJWTError
+from datetime import date
 
 class AuthService:
+    oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+
     @staticmethod
     def _calculate_age(dob: date) -> int:
         """Calculate age from date of birth"""
@@ -79,10 +80,20 @@ class AuthService:
         return TokenResponse(access_token=token)
 
     @staticmethod
-    async def get_current_user(token: str, session) -> UserResponse:
-        # Decode token to get user ID
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = int(payload.get("sub"))
+    async def get_current_user(token: str, session) -> User:
+        try:
+            payload = jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+            sub = payload.get("sub")
+            if sub is None:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+            user_id = int(sub)
+        except (PyJWTError, TypeError, ValueError):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-        if user_id is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token" )
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+        return user

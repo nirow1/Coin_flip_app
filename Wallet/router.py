@@ -8,8 +8,15 @@ from Auth.dependencies import get_current_user
 
 router = APIRouter(prefix="/wallet", tags=["wallet"])
 
-@router.post("/balance", response_model=WalletResponse)
+@router.get("/balance", response_model=WalletResponse)
 async def get_balance(current_user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     wallet_service = WalletService(session)
-    wallet = await wallet_service.get_wallet_for_update(current_user["id"])
+    wallet = await wallet_service.get_wallet(current_user["id"])
     return wallet
+
+@router.get("/transactions", response_model=list[TransactionResponse])
+async def get_transactions(current_user: dict = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    wallet_service = WalletService(session)
+    wallet = await wallet_service.get_wallet(current_user["id"])
+    transactions = await wallet_service.get_transactions(wallet.id)
+    return transactions
