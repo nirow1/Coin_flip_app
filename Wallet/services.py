@@ -46,7 +46,7 @@ class WalletService:
         results = await self.session.execute(
             select(Transaction)
             .where(Transaction.wallet_id == wallet_id)
-            .order_by(Transaction.timestamp.desc())
+            .order_by(Transaction.id.desc())
         )
         transactions = cast(list[Transaction], results.scalars().all())
         return transactions
