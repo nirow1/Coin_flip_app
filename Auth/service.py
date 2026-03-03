@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from Auth.models import User
 from config import settings
+from Wallet.services import WalletService
 from jwt import PyJWTError
 from datetime import date
 
@@ -49,8 +50,7 @@ class AuthService:
         await session.commit()
         await session.refresh(user)
 
-        # TODO: Create wallet for user
-        # await WalletService.create_wallet(user.id, session)
+        await WalletService(session).create_wallet(user.id)
 
         return UserResponse(
             id=user.id,

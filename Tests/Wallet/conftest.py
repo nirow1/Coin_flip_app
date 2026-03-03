@@ -64,3 +64,4 @@ async def test_user(engine) -> User:
             await s.refresh(user)
         await conn.commit()
     return user
+
