@@ -1,4 +1,5 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Annotated
 from datetime import datetime
 from decimal import Decimal
 
@@ -22,3 +23,6 @@ class TransactionResponse(BaseModel):
 class TransactionListResponse(BaseModel):
     transactions: list[TransactionResponse]
     total: int
+
+class AmountRequest(BaseModel):
+    amount: Annotated[Decimal, Field(gt=0)]

@@ -14,8 +14,6 @@ class WalletService:
     async def create_wallet(self, user_id: int) -> Wallet:
         new_wallet = Wallet(user_id=user_id, balance=Decimal("0.00"))
         self.session.add(new_wallet)
-        await self.session.commit()
-        await self.session.refresh(new_wallet)
         return new_wallet
 
     # Get wallet (read-only)
@@ -41,11 +39,12 @@ class WalletService:
 
         return wallet
 
-    # Get transactions.
-    async def get_transactions(self, wallet_id: int) -> list[Transaction]:  # type: ignore[override]
+    # Get transactions by user_id — fetches wallet internally
+    async def get_transactions(self, user_id: int) -> list[Transaction]:  # type: ignore[override]
         results = await self.session.execute(
             select(Transaction)
-            .where(Transaction.wallet_id == wallet_id)
+            .join(Wallet, Transaction.wallet_id == Wallet.id)
+            .where(Wallet.user_id == user_id)
             .order_by(Transaction.id.desc())
         )
         transactions = cast(list[Transaction], results.scalars().all())

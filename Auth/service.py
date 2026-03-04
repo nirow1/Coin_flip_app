@@ -47,10 +47,10 @@ class AuthService:
         )
 
         session.add(user)
+        await WalletService(session).create_wallet(user.id)
+
         await session.commit()
         await session.refresh(user)
-
-        await WalletService(session).create_wallet(user.id)
 
         return UserResponse(
             id=user.id,

@@ -56,8 +56,7 @@ async def test_get_transactions(session, test_user):
     await service.credit(test_user.id, Decimal("100"))
     await service.debit(test_user.id, Decimal("30"))
 
-    wallet = await service.get_wallet(test_user.id)
-    transactions = await service.get_transactions(wallet.id)
+    transactions = await service.get_transactions(test_user.id)
 
     assert len(transactions) == 2
     assert transactions[0].amount == Decimal("-30")   # debit — highest id (desc)
