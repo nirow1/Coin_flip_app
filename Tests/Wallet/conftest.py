@@ -2,11 +2,13 @@ from datetime import date
 from typing import AsyncGenerator
 import pytest
 import pytest_asyncio
+from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from Auth.models import User
 from Core.security import hash_password
 from config import settings
-from db import Base
+from db import Base, get_session
+from main import app
 
 TEST_DATABASE_URL = settings.TEST_DATABASE_URL
 
@@ -60,8 +62,44 @@ async def test_user(engine) -> User:
                 dob=date(2000, 1, 1)
             )
             s.add(user)
-            await s.commit()
+            await s.flush()
             await s.refresh(user)
         await conn.commit()
     return user
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def client(session):
+    async def override_get_session():
+        yield session
+
+    app.dependency_overrides[get_session] = override_get_session
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+
+    app.dependency_overrides.clear()
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def auth_user(client, session):
+    # Create user
+    user = User(
+        email="router@example.com",
+        password_hash=hash_password("Secret123!"),
+        country="CZ",
+        dob=date(2000, 1, 1)
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+
+    # Login to get JWT
+    response = await client.post(
+        "/auth/login",
+        data={"username": user.email, "password": "Secret123!"}
+    )
+
+    token = response.json()["access_token"]
+    client.headers.update({"Authorization": f"Bearer {token}"})
+
+    return {"user": user, "token": token}
 

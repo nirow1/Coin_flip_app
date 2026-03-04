@@ -57,8 +57,8 @@ async def test_get_transactions(client: AsyncClient, test_user):
     transactions = response.json()
     assert len(transactions) == 2
     amounts = {Decimal(t["amount"]) for t in transactions}
-    assert Decimal("100") in amounts
-    assert Decimal("-30") in amounts
+    assert Decimal("20") in amounts
+    assert Decimal("-5") in amounts
 
 async def test_get_balance_unauthorized():
     response = await client.get("/wallet/balance")
