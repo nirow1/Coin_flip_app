@@ -1,14 +1,16 @@
-from datetime import date
-from typing import AsyncGenerator
 import pytest
-import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from Auth.models import User
+from Wallet.router import router as wallet_router
+from Auth.router import router as auth_router
+from httpx import AsyncClient, ASGITransport
 from Core.security import hash_password
-from config import settings
+from typing import AsyncGenerator
 from db import Base, get_session
-from main import app
+from Auth.models import User
+from fastapi import FastAPI
+from config import settings
+from datetime import date
+import pytest_asyncio
 
 TEST_DATABASE_URL = settings.TEST_DATABASE_URL
 
@@ -46,60 +48,61 @@ async def session(engine) -> AsyncGenerator[AsyncSession, None]:
                 await conn.rollback()  # Rollback the outer transaction, wiping all test data
 
 
-@pytest_asyncio.fixture(scope="session", loop_scope="session")
-async def test_user(engine) -> User:
-    # Create the test user once for the entire session using its own connection
-    async with engine.connect() as conn:
-        await conn.begin()
-        test_session = async_sessionmaker(bind=conn,
-                                          expire_on_commit=False,
-                                          join_transaction_mode="create_savepoint")
-        async with test_session() as s:
-            user = User(
-                email="test@example.com",
-                password_hash=hash_password("Secret123!"),
-                country="CZ",
-                dob=date(2000, 1, 1)
-            )
-            s.add(user)
-            await s.flush()
-            await s.refresh(user)
-        await conn.commit()
-    return user
-
 @pytest_asyncio.fixture(loop_scope="session")
-async def client(session):
-    async def override_get_session():
-        yield session
-
-    app.dependency_overrides[get_session] = override_get_session
-
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        yield ac
-
-    app.dependency_overrides.clear()
-
-@pytest_asyncio.fixture(loop_scope="session")
-async def auth_user(client, session):
-    # Create user
+async def test_user(session):
     user = User(
-        email="router@example.com",
+        email="test@example.com",
         password_hash=hash_password("Secret123!"),
         country="CZ",
         dob=date(2000, 1, 1)
     )
+
     session.add(user)
+    await session.flush()
     await session.commit()
     await session.refresh(user)
+
+    return user
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def client(test_app, session):
+    async def override_get_session():
+        yield session
+
+    test_app.dependency_overrides[get_session] = override_get_session
+
+    transport = ASGITransport(app=test_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
+
+    test_app.dependency_overrides.pop(get_session, None)
+
+@pytest.fixture(scope="session")
+def test_app():
+    app = FastAPI()
+    app.include_router(auth_router, prefix="/auth")
+    app.include_router(wallet_router, prefix="/wallet")
+    return app
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def auth_user(client):
+    # Register user through the API — wallet is created automatically by register_user
+    await client.post("/auth/register", json={
+        "email": "router@example.com",
+        "password": "Secret123!",
+        "country": "CZ",
+        "dob": "2000-01-01"
+    })
 
     # Login to get JWT
     response = await client.post(
         "/auth/login",
-        data={"username": user.email, "password": "Secret123!"}
+        data={"username": "router@example.com", "password": "Secret123!"}
     )
 
     token = response.json()["access_token"]
-    client.headers.update({"Authorization": f"Bearer {token}"})
 
-    return {"user": user, "token": token}
+    return {"token": token}
 

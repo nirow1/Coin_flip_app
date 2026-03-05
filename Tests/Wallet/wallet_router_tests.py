@@ -6,11 +6,10 @@ from Wallet.services import WalletService
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
-async def test_get_balance(client, test_user):
-    headers = {"Authorization": f"Bearer {test_user['token']}"}
+async def test_get_balance(client, auth_user):
+    token = auth_user
 
-
-    response = await client.get("/wallet/balance", headers=headers)
+    response = await client.get( "/wallet/balance", headers={"Authorization": f"Bearer {token}"} )
     assert response.status_code == 200
 
     data = response.json()
@@ -60,6 +59,6 @@ async def test_get_transactions(client: AsyncClient, test_user):
     assert Decimal("20") in amounts
     assert Decimal("-5") in amounts
 
-async def test_get_balance_unauthorized():
+async def test_get_balance_unauthorized(client: AsyncClient):
     response = await client.get("/wallet/balance")
     assert response.status_code == 401
