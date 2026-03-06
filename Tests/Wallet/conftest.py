@@ -1,11 +1,15 @@
+from decimal import Decimal
+
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+
 from Wallet.router import router as wallet_router
 from Auth.router import router as auth_router
 from httpx import AsyncClient, ASGITransport
 from Core.security import hash_password
 from typing import AsyncGenerator
 from db import Base, get_session
+from Wallet.models import Wallet
 from Auth.models import User
 from fastapi import FastAPI
 from config import settings
@@ -64,6 +68,16 @@ async def test_user(session):
 
     return user
 
+@pytest_asyncio.fixture(loop_scope="session")
+async def test_wallet(session, test_user):
+    wallet = Wallet(user_id=test_user.id, balance=Decimal("0.00"))
+
+    session.add(wallet)
+    await session.flush()
+    await session.commit()
+    await session.refresh(wallet)
+
+    return wallet
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def client(test_app, session):
