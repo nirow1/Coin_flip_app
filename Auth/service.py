@@ -47,6 +47,7 @@ class AuthService:
         )
 
         session.add(user)
+        await session.flush()  # Assign user.id before creating wallet
         await WalletService(session).create_wallet(user.id)
 
         await session.commit()

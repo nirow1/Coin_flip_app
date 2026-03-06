@@ -80,17 +80,27 @@ async def test_wallet(session, test_user):
     return wallet
 
 @pytest_asyncio.fixture(loop_scope="session")
-async def client(test_app, session):
-    async def override_get_session():
-        yield session
+async def client(test_app, engine):
+    async with engine.connect() as conn:
+        await conn.begin()
 
-    test_app.dependency_overrides[get_session] = override_get_session
+        test_session_factory = async_sessionmaker(bind=conn,
+                                                  expire_on_commit=False,
+                                                  join_transaction_mode="create_savepoint")
 
-    transport = ASGITransport(app=test_app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
+        async def override_get_session():
+            async with test_session_factory() as s:
+                yield s
 
-    test_app.dependency_overrides.pop(get_session, None)
+        test_app.dependency_overrides[get_session] = override_get_session
+
+        transport = ASGITransport(app=test_app)
+        try:
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                yield ac
+        finally:
+            test_app.dependency_overrides.pop(get_session, None)
+            await conn.rollback()
 
 @pytest.fixture(scope="session")
 def test_app():
@@ -113,7 +123,7 @@ async def auth_user(client):
     # Login to get JWT
     response = await client.post(
         "/auth/login",
-        data={"username": "router@example.com", "password": "Secret123!"}
+        json={"email": "router@example.com", "password": "Secret123!"}
     )
 
     token = response.json()["access_token"]
