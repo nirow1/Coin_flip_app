@@ -30,7 +30,7 @@ async def test_credit_wallet(client, auth_user):
     balance_data = balance.json()
     assert Decimal(balance_data["balance"]) == Decimal("50")
     data = response.json()
-    assert data["amount"] == "50"
+    assert data["amount"] == "50.00"
 
 async def test_debit_wallet(client, auth_user):
     headers = {"Authorization": f"Bearer {auth_user['token']}"}
@@ -50,7 +50,7 @@ async def test_debit_wallet(client, auth_user):
     assert Decimal(balance_data["balance"]) == Decimal("70")
 
     data = response.json()
-    assert data["amount"] == "-30"
+    assert data["amount"] == "-30.00"
 
 async def test_get_transactions(client: AsyncClient, auth_user):
     headers = {"Authorization": f"Bearer {auth_user['token']}"}

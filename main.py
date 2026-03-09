@@ -7,7 +7,7 @@ from fastapi import FastAPI
 app = FastAPI(title="Daily Flip API", lifespan=lifespan)
 
 app.include_router(auth_router, prefix="/auth")
-app.include_router(wallet_router, prefix="/wallet")
+app.include_router(wallet_router)
 #app.include_router(game_router, prefix="/game")
 
 @app.get("/health")

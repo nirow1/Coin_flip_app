@@ -85,8 +85,7 @@ async def client(test_app, engine):
         await conn.begin()
 
         test_session_factory = async_sessionmaker(bind=conn,
-                                                  expire_on_commit=False,
-                                                  join_transaction_mode="create_savepoint")
+                                                  expire_on_commit=False)
 
         async def override_get_session():
             async with test_session_factory() as s:
@@ -106,7 +105,7 @@ async def client(test_app, engine):
 def test_app():
     app = FastAPI()
     app.include_router(auth_router, prefix="/auth")
-    app.include_router(wallet_router, prefix="/wallet")
+    app.include_router(wallet_router)
     return app
 
 
