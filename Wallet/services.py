@@ -3,6 +3,7 @@ from sqlalchemy import select
 from decimal import Decimal
 from typing import cast
 from Wallet.models import Wallet, Transaction
+from Wallet.enums import TransactionType
 from fastapi import HTTPException, status
 
 
@@ -50,7 +51,7 @@ class WalletService:
         transactions = cast(list[Transaction], results.scalars().all())
         return transactions
 
-    async def _apply_transaction(self, wallet: Wallet, amount: Decimal, transaction_type: str) -> Transaction:
+    async def _apply_transaction(self, wallet: Wallet, amount: Decimal, transaction_type: TransactionType) -> Transaction:
         new_balance = wallet.balance + amount
 
         if new_balance < Decimal("0.00"):
@@ -65,10 +66,10 @@ class WalletService:
         await self.session.refresh(wallet)
         return transaction
 
-    async def credit(self, user_id: int, amount: Decimal, transaction_type: str = "credit") -> Transaction:
+    async def credit(self, user_id: int, amount: Decimal, transaction_type: TransactionType = TransactionType.CREDIT) -> Transaction:
         wallet = await self.get_wallet_for_update(user_id)
         return await self._apply_transaction(wallet, amount, transaction_type)
 
-    async def debit(self, user_id: int, amount: Decimal, transaction_type: str = "debit") -> Transaction:
+    async def debit(self, user_id: int, amount: Decimal, transaction_type: TransactionType = TransactionType.DEBIT) -> Transaction:
         wallet = await self.get_wallet_for_update(user_id)
         return await self._apply_transaction(wallet, -amount, transaction_type)
