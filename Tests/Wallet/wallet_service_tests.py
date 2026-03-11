@@ -8,10 +8,6 @@ from Wallet.services import WalletService
 from Wallet.models import Transaction
 from Wallet.enums import TransactionType
 from Core.exceptions import InsufficientFundsError
-from Core.security import hash_password
-from Auth.models import User
-from Wallet.models import Wallet
-from datetime import date
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -65,30 +61,8 @@ async def test_get_transactions(session, test_user, test_wallet):
     assert transactions[0].amount == Decimal("-30")   # debit — highest id (desc)
     assert transactions[1].amount == Decimal("100")   # credit — lower id
 
-async def test_concurrent_debits(engine):
-    # Create a dedicated user and wallet committed to the DB
-    async with engine.connect() as conn:
-        await conn.begin()
-        sf = async_sessionmaker(bind=conn, expire_on_commit=False)
-        async with sf() as s:
-            user = User(
-                email="concurrent@example.com",
-                password_hash=hash_password("Secret123!"),
-                country="CZ",
-                dob=date(2000, 1, 1)
-            )
-            s.add(user)
-            await s.flush()
-
-            wallet = Wallet(user_id=user.id, balance=Decimal("0.00"))
-            s.add(wallet)
-            await s.commit()
-            await s.refresh(user)
-            await s.refresh(wallet)
-        await conn.commit()
-
-    user_id = user.id
-    wallet_id = wallet.id
+async def test_concurrent_debits(engine, committed_user_and_wallet):
+    user_id, wallet_id = committed_user_and_wallet
 
     # Credit 100 first using a dedicated connection
     async with engine.connect() as conn:
@@ -101,18 +75,14 @@ async def test_concurrent_debits(engine):
 
     # Each debit needs its own connection to simulate real concurrency with FOR UPDATE locking
     async def debit_60():
-        async with engine.connect() as conn:
-            await conn.begin()
-            sf = async_sessionmaker(bind=conn, expire_on_commit=False)
-            async with sf() as s:
-                service = WalletService(s)
-                try:
-                    await service.debit(user_id, Decimal("60"))
-                    await conn.commit()
-                    return "success"
-                except (InsufficientFundsError, HTTPException):
-                    await conn.rollback()
-                    return "failed"
+        try:
+            await run_in_transaction(
+                engine,
+                lambda s: WalletService(s).debit(user_id, Decimal("60"))
+            )
+            return "success"
+        except (InsufficientFundsError, HTTPException):
+            return "failed"
 
     # Run two debits at the same time
     results = await asyncio.gather(debit_60(), debit_60())
@@ -136,6 +106,53 @@ async def test_concurrent_debits(engine):
                 )
             ).scalars().all()
 
-            debit_txs = [t for t in txs if t.type == "debit"]
+            debit_txs = [t for t in txs if t.type == TransactionType.DEBIT]
             assert len(debit_txs) == 1
 
+async def test_concurrent_credits(engine, committed_user_and_wallet):
+    user_id, wallet_id = committed_user_and_wallet
+
+    # Read starting balance before credits
+    async with engine.connect() as conn:
+        sf = async_sessionmaker(bind=conn, expire_on_commit=False)
+        async with sf() as s:
+            service = WalletService(s)
+            wallet = await service.get_wallet(user_id)
+            starting_balance = wallet.balance
+
+    async def credit_50():
+        await run_in_transaction(
+            engine,
+            lambda s: WalletService(s).credit(user_id, Decimal("50"))
+        )
+
+    await asyncio.gather(credit_50(), credit_50())
+
+    async with engine.connect() as conn:
+        sf = async_sessionmaker(bind=conn, expire_on_commit=False)
+        async with sf() as s:
+            service = WalletService(s)
+            wallet = await service.get_wallet(user_id)
+            assert wallet.balance == starting_balance + Decimal("100")
+
+            txs = (
+                await s.execute(
+                    select(Transaction).where(Transaction.wallet_id == wallet_id)
+                )
+            ).scalars().all()
+
+            credit_txs = [t for t in txs if t.type == TransactionType.CREDIT]
+            assert len(credit_txs) >= 2
+
+async def run_in_transaction(engine, coro):
+    async with engine.connect() as conn:
+        await conn.begin()
+        sf = async_sessionmaker(bind=conn, expire_on_commit=False)
+        async with sf() as s:
+            try:
+                result = await coro(s)
+                await conn.commit()
+                return result
+            except Exception:
+                await conn.rollback()
+                raise

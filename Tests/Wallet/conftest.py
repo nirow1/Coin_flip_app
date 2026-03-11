@@ -129,3 +129,38 @@ async def auth_user(client):
 
     return {"token": token}
 
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def committed_user_and_wallet(engine):
+    from sqlalchemy import select
+
+    async with engine.connect() as conn:
+        await conn.begin()
+        sf = async_sessionmaker(bind=conn, expire_on_commit=False)
+        async with sf() as s:
+            # Check if user already exists from a previous interrupted run
+            result = await s.execute(select(User).where(User.email == "concurrent@example.com"))
+            user = result.scalar_one_or_none()
+
+            if user is None:
+                user = User(
+                    email="concurrent@example.com",
+                    password_hash=hash_password("Secret123!"),
+                    country="CZ",
+                    dob=date(2000, 1, 1)
+                )
+                s.add(user)
+                await s.flush()
+
+                wallet = Wallet(user_id=user.id, balance=Decimal("0.00"))
+                s.add(wallet)
+            else:
+                result = await s.execute(select(Wallet).where(Wallet.user_id == user.id))
+                wallet = result.scalar_one()
+
+            await s.commit()
+            await s.refresh(user)
+            await s.refresh(wallet)
+        await conn.commit()
+
+    return [user.id, wallet.id]
+
