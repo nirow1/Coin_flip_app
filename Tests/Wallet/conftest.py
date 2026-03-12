@@ -1,8 +1,4 @@
-from decimal import Decimal
-
-import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-
 from Wallet.router import router as wallet_router
 from Auth.router import router as auth_router
 from httpx import AsyncClient, ASGITransport
@@ -10,11 +6,14 @@ from Core.security import hash_password
 from typing import AsyncGenerator
 from db import Base, get_session
 from Wallet.models import Wallet
+from sqlalchemy import select
 from Auth.models import User
 from fastapi import FastAPI
 from config import settings
+from decimal import Decimal
 from datetime import date
 import pytest_asyncio
+import pytest
 
 TEST_DATABASE_URL = settings.TEST_DATABASE_URL
 
@@ -131,8 +130,6 @@ async def auth_user(client):
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def committed_user_and_wallet(engine):
-    from sqlalchemy import select
-
     async with engine.connect() as conn:
         await conn.begin()
         sf = async_sessionmaker(bind=conn, expire_on_commit=False)

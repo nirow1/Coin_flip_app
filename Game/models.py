@@ -12,7 +12,7 @@ class Game(Base):
     flip_time = Column(DateTime(timezone=True), nullable=False)
 
     initial_player_count = Column(Integer, nullable=True)
-    current_player_count = Column(Integer, nullable=True)
+    current_player_count = Column(Integer, nullable=True, default=0)
 
     prize_pool = Column(Numeric(10, 2), nullable=False, default=0)
     showdown_active = Column(Boolean, default=False)
