@@ -57,12 +57,41 @@ class GameService:
         return joined_player
 
     async def choose_side(self, user_id: int, game_id: int, choice: str):
-        ...
+        self._validate_choice(choice)
+
+        result = await self.session.execute(select(GamePlayer)
+                                             .where(GamePlayer.user_id == user_id,
+                                                    GamePlayer.game_id == game_id))
+        player = result.scalar_one_or_none()
+
+        if player is None:
+            raise ValueError("No player available to choose")
+
+        if player.is_eliminated:
+            raise ValueError("Eliminated players cannot choose a side")
+
+        player.choice = choice
+        await self.session.flush()
+
+        return await self.get_percentages(game_id)
 
     async def get_percentages(self, game_id: int) -> dict:
-        ...
+        result = await self.session.execute(select(Game).where(Game.id == game_id,
+                                                               GamePlayer.is_eliminated == False))
+        choices = [row[0] for row in result.fetchall() if row[0] is not None]
 
-    async def get_player_active_game(self, user_id: int) -> Optional[Game]:
+        total_choices = len(choices)
+
+        if total_choices == 0:
+            return {"heads": 0, "tails": 0}
+
+        return {
+            "heads": round(choices.count("heads") / total_choices * 100, 2),
+            "tails": round(choices.count("tails") / total_choices * 100, 2)
+        }
+
+
+    async def get_player_active_games(self, user_id: int) -> Optional[Game]:
         ...
 
     # Internal helpers
