@@ -1,11 +1,10 @@
 from decimal import Decimal
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from Wallet.services import WalletService
 from Game.models import Game, GamePlayer
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
 
 class GameService:
@@ -27,18 +26,28 @@ class GameService:
         await self.session.flush()
         return new_game
 
-    async def get_open_game(self) -> Optional[Game]:
-        result = await self.session.execute(
-            select(Game).where(Game.status == "open")
-        )
-        return result.scalar_one()
+    async def get_open_game(self, lock: bool = False) -> Optional[Game]:
+        query = select(Game).where(Game.status == "open")
+        if lock:
+            query = query.with_for_update()
+        result = await self.session.execute(query)
+        return result.scalar_one_or_none()
 
     async def join_game(self, user_id: int, choice: str) -> GamePlayer:
         self._validate_choice(choice)
 
-        game = await  self.get_open_game()
+        game = await self.get_open_game(lock=True)
+
         if game is None:
-            raise ValueError("No open game available to join")
+            raise ValueError("No open game available")
+
+        # Check if the player is already in the game
+        existing = await self.session.execute(
+            select(GamePlayer).where(GamePlayer.game_id == game.id,
+                                     GamePlayer.user_id == user_id)
+        )
+        if existing.scalar_one_or_none() is not None:
+            raise ValueError("Player is already in this game")
 
         await self.wallet_service.debit(user_id, Decimal("1.00"))
 
@@ -48,6 +57,7 @@ class GameService:
                                    round_number=1,
                                    is_eliminated=False,
                                    eliminated_at=None)
+
         self.session.add(joined_player)
 
         game.prize_pool += Decimal("1.00")
@@ -58,6 +68,15 @@ class GameService:
 
     async def choose_side(self, user_id: int, game_id: int, choice: str):
         self._validate_choice(choice)
+
+        result = await self.session.execute(select(Game).where(Game.id == game_id))
+        game = result.scalar_one_or_none()
+
+        if game is None:
+            raise ValueError("game does not exist")
+
+        if game.status != "open":
+            raise ValueError("Cannot choose a side in a game that is not open")
 
         result = await self.session.execute(select(GamePlayer)
                                              .where(GamePlayer.user_id == user_id,
@@ -76,8 +95,11 @@ class GameService:
         return await self.get_percentages(game_id)
 
     async def get_percentages(self, game_id: int) -> dict:
-        result = await self.session.execute(select(Game).where(Game.id == game_id,
-                                                               GamePlayer.is_eliminated == False))
+        result = await self.session.execute(
+            select(GamePlayer.choice)
+            .where(GamePlayer.game_id == game_id,
+                   GamePlayer.is_eliminated.is_(False))
+        )
         choices = [row[0] for row in result.fetchall() if row[0] is not None]
 
         total_choices = len(choices)
@@ -91,21 +113,36 @@ class GameService:
         }
 
 
-    async def get_player_active_games(self, user_id: int) -> Optional[Game]:
-        ...
+    async def get_player_active_games(self, user_id: int) -> List[Game]:
+        result = await self.session.execute(select(Game)
+                                             .join(GamePlayer, Game.id == GamePlayer.game_id)
+                                             .where(GamePlayer.user_id == user_id,
+                                                    Game.status.in_(["open", "active"]),
+                                                    GamePlayer.is_eliminated.is_(False)))
+        return list(result.scalars().all())
 
     # Internal helpers
     async def _get_game_by_id(self, game_id: int) -> Game:
-        ...
+        result = await self.session.execute(select(Game).where(Game.id == game_id))
+        game = result.scalar_one_or_none()
+
+        if game is None:
+            raise ValueError("Game not found")
+
+        return game
 
     async def _get_game_player(self, game_id: int, user_id: int) -> GamePlayer:
-        ...
+        result = await self.session.execute(select(GamePlayer)
+                                             .where(GamePlayer.game_id == game_id,
+                                                    GamePlayer.user_id == user_id))
+        player = result.scalar_one_or_none()
 
-    async def _ensure_user_not_in_active_game(self, user_id: int):
-        ...
+        if player is None:
+            raise ValueError("Player not found in this game")
 
-    async def _calculate_percentages(self, game_id: int) -> dict:
-        ...
+        return player
 
-    def _validate_choice(self, choice: str):
-        ...
+    @staticmethod
+    def _validate_choice(choice: str):
+        if choice not in ("heads", "tails"):
+            raise ValueError("Choice must be 'heads' or 'tails'")

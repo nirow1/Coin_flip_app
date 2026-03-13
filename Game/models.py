@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Numeric, Boolean, func, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Numeric, Boolean, func, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from db import Base
 
@@ -38,6 +38,10 @@ class GamePlayer(Base):
     eliminated_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("game_id", "user_id", name="uq_game_player"),
+    )
 
     # Relationships
     game = relationship("Game", back_populates="players")
