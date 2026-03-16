@@ -1,10 +1,11 @@
-from decimal import Decimal
-from sqlalchemy import select
+import secrets
+from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from Wallet.services import WalletService
 from Game.models import Game, GamePlayer
-from datetime import datetime, timezone
 from typing import Optional, List
+from sqlalchemy import select
+from decimal import Decimal
 
 
 class GameService:
@@ -13,25 +14,6 @@ class GameService:
         self.wallet_service = wallet_service
 
         # Public API
-    async def create_game(self, flip_time: datetime) -> Game:
-        new_game = Game(status="open",
-                        start_date=datetime.now(timezone.utc),
-                        flip_time=flip_time,
-                        prize_pool=Decimal("0"),
-                        initial_player_count=None,
-                        current_player_count=0,
-                        showdown_active=False)
-
-        self.session.add(new_game)
-        await self.session.flush()
-        return new_game
-
-    async def get_open_game(self, lock: bool = False) -> Optional[Game]:
-        query = select(Game).where(Game.status == "open")
-        if lock:
-            query = query.with_for_update()
-        result = await self.session.execute(query)
-        return result.scalar_one_or_none()
 
     async def join_game(self, user_id: int, choice: str) -> GamePlayer:
         self._validate_choice(choice)
@@ -48,6 +30,12 @@ class GameService:
         )
         if existing.scalar_one_or_none() is not None:
             raise ValueError("Player is already in this game")
+
+        if game.next_flip_at is not None:
+            now = datetime.now(timezone.utc)
+            lockout_start = game.next_flip_at - timedelta(minutes=5)
+            if now >= lockout_start:
+                raise ValueError("Joining is disabled 5 minutes before the flip")
 
         await self.wallet_service.debit(user_id, Decimal("1.00"))
 
@@ -69,8 +57,7 @@ class GameService:
     async def choose_side(self, user_id: int, game_id: int, choice: str):
         self._validate_choice(choice)
 
-        result = await self.session.execute(select(Game).where(Game.id == game_id))
-        game = result.scalar_one_or_none()
+        game = await self._get_game_by_id(game_id)
 
         if game is None:
             raise ValueError("game does not exist")
@@ -121,7 +108,87 @@ class GameService:
                                                     GamePlayer.is_eliminated.is_(False)))
         return list(result.scalars().all())
 
+    async def execute_flip(self, game_id: int) -> Game:
+        game = await self._get_game_by_id(game_id)
+        players = await self._get_players_for_game(game_id)
+
+        # Check if all *alive* players chose the same side
+        alive_players = [p for p in players if not p.is_eliminated]
+
+        # todo: check if incrementing round number logic is correct
+        # Increment round count for everyone
+        for player in alive_players:
+            player.round_number += 1
+
+        if len({p.choice for p in alive_players}) == 1:
+            game.status = "showdown_pending"
+            await self.session.commit()
+            return game
+
+        # Normal flip
+        winning_side = self._flip_coin()
+
+        # Apply elimination logic
+        for player in alive_players:
+            if player.choice != winning_side:
+                player.is_eliminated = True
+                player.eliminated_at = datetime.now(timezone.utc)
+
+        # Set initial player count
+        if game.initial_player_count is None:
+            game.initial_player_count = len(players)
+
+        survivors = [p for p in players if not p.is_eliminated]
+        game.current_player_count = len(survivors)
+
+        # One survivor → finished
+        if len(survivors) == 1:
+            game.status = "finished"
+        # ≤ 5% survivors → showdown
+        elif game.current_player_count / game.initial_player_count <= 0.05:
+            game.status = "showdown_pending"
+        # Otherwise → game continues normally
+        else:
+            game.status = "active"
+
+        await self.session.commit()
+        return game
+
+    async def set_showdown_decision(self, user_id: int, game_id: int, decision: str):
+        player = await self._get_game_player(game_id, user_id)
+        game = await self._get_game_by_id(game_id)
+
+        if game.status == "showdown_pending":
+            raise ValueError("Showdown is not active yet")
+        if decision not in ("take", "continue"):
+            raise ValueError("Decision must be 'take' or 'continue'")
+
+        player.cashout_decision = decision
+        await self.session.flush()
+
+    async def start_showdown(self, game_id: int):
+        ...
+
+    async def execute_showdown_flip(self, game_id: int):
+        ...
+
+    async def cashout(self, user_id: int, game_id: int) -> Decimal:
+        ...
+
     # Internal helpers
+    async def create_game(self, flip_time: datetime) -> Game:
+        new_game = Game(status="open",
+                        start_date=datetime.now(timezone.utc),
+                        flip_time=flip_time,
+                        prize_pool=Decimal("0"),
+                        initial_player_count=None,
+                        current_player_count=0,
+                        showdown_active=False)
+
+        self.session.add(new_game)
+        await self.session.flush()
+        return new_game
+
     async def _get_game_by_id(self, game_id: int) -> Game:
         result = await self.session.execute(select(Game).where(Game.id == game_id))
         game = result.scalar_one_or_none()
@@ -130,6 +197,13 @@ class GameService:
             raise ValueError("Game not found")
 
         return game
+
+    async def get_open_game(self, lock: bool = False) -> Optional[Game]:
+        query = select(Game).where(Game.status == "open")
+        if lock:
+            query = query.with_for_update()
+        result = await self.session.execute(query)
+        return result.scalar_one_or_none()
 
     async def _get_game_player(self, game_id: int, user_id: int) -> GamePlayer:
         result = await self.session.execute(select(GamePlayer)
@@ -141,6 +215,16 @@ class GameService:
             raise ValueError("Player not found in this game")
 
         return player
+
+    async def _get_players_for_game(self, game_id: int) -> List[GamePlayer]:
+        result = await self.session.execute(select(GamePlayer)
+                                             .where(GamePlayer.game_id == game_id,
+                                                    GamePlayer.is_eliminated.is_(False)))
+        return list(result.scalars().all())
+
+    @staticmethod
+    def _flip_coin() -> str:
+        return "heads" if secrets.randbelow(2) == 0 else "tails"
 
     @staticmethod
     def _validate_choice(choice: str):
