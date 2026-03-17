@@ -31,9 +31,9 @@ class GameService:
         if existing.scalar_one_or_none() is not None:
             raise ValueError("Player is already in this game")
 
-        if game.next_flip_at is not None:
+        if game.flip_time is not None:
             now = datetime.now(timezone.utc)
-            lockout_start = game.next_flip_at - timedelta(minutes=5)
+            lockout_start = game.flip_time - timedelta(minutes=5)
             if now >= lockout_start:
                 raise ValueError("Joining is disabled 5 minutes before the flip")
 
@@ -112,24 +112,23 @@ class GameService:
         game = await self._get_game_by_id(game_id)
         players = await self._get_players_for_game(game_id)
 
-        # Check if all *alive* players chose the same side
-        alive_players = [p for p in players if not p.is_eliminated]
+        if game.status not in ("open", "active"):
+            raise ValueError("Cannot flip in this game state")
 
-        # todo: check if incrementing round number logic is correct
         # Increment round count for everyone
-        for player in alive_players:
+        for player in players:
             player.round_number += 1
 
-        if len({p.choice for p in alive_players}) == 1:
+        if len({p.choice for p in players}) == 1:
             game.status = "showdown_pending"
-            await self.session.commit()
+            await self.session.flush()
             return game
 
         # Normal flip
         winning_side = self._flip_coin()
 
         # Apply elimination logic
-        for player in alive_players:
+        for player in players:
             if player.choice != winning_side:
                 player.is_eliminated = True
                 player.eliminated_at = datetime.now(timezone.utc)
@@ -151,14 +150,16 @@ class GameService:
         else:
             game.status = "active"
 
-        await self.session.commit()
+        await self.session.flush()
         return game
 
     async def set_showdown_decision(self, user_id: int, game_id: int, decision: str):
         player = await self._get_game_player(game_id, user_id)
         game = await self._get_game_by_id(game_id)
 
-        if game.status == "showdown_pending":
+        if player.is_eliminated:
+            raise ValueError("Eliminated players cannot make a showdown decision")
+        if game.status != "showdown_pending":
             raise ValueError("Showdown is not active yet")
         if decision not in ("take", "continue"):
             raise ValueError("Decision must be 'take' or 'continue'")
@@ -189,10 +190,12 @@ class GameService:
         await self.session.flush()
         return new_game
 
-    async def _get_game_by_id(self, game_id: int) -> Game:
-        result = await self.session.execute(select(Game).where(Game.id == game_id))
-        game = result.scalar_one_or_none()
+    async def _get_game_by_id(self, game_id: int, lock: bool = True) -> Game:
+        query = select(Game).where(Game.id == game_id)
+        if lock:
+            query = query.with_for_update()
 
+        game = (await self.session.execute(query)).scalar_one_or_none()
         if game is None:
             raise ValueError("Game not found")
 
