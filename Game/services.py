@@ -161,14 +161,45 @@ class GameService:
             raise ValueError("Eliminated players cannot make a showdown decision")
         if game.status != "showdown_pending":
             raise ValueError("Showdown is not active yet")
-        if decision not in ("take", "continue"):
-            raise ValueError("Decision must be 'take' or 'continue'")
+        if decision not in ("cashout", "continue"):
+            raise ValueError("Decision must be 'cashout' or 'continue'")
 
         player.cashout_decision = decision
         await self.session.flush()
 
-    async def start_showdown(self, game_id: int):
-        ...
+    async def try_start_showdown(self, game_id: int) -> Optional[Game]:
+        game = await self._get_game_by_id(game_id)
+
+        if game.status != "showdown_pending":
+            raise ValueError("Showdown is not pending")
+
+        # Survivors only
+        players = await self._get_players_for_game(game_id)
+
+        # 1. Split into takers and continuers
+        takers = [p for p in players if p.cashout_decision == "cashout"]
+        continuers = [p for p in players if p.cashout_decision != "cashout"]  # includes undecided
+
+        # 2. Process cashouts
+        for p in takers:
+            p.is_eliminated = True
+            p.eliminated_at = datetime.now(timezone.utc)
+            await self.cashout(p.user_id, game_id)
+
+        # 3. Determine next state
+        if len(continuers) == 0:
+            game.status = "finished"
+        elif len(continuers) == 1:
+            winner = continuers[0]
+            winner.is_eliminated = True
+            winner.eliminated_at = datetime.now(timezone.utc)
+            await self.cashout(winner.user_id, game_id)
+            game.status = "finished"
+        else:
+            game.status = "showdown_active"
+
+        await self.session.flush()
+        return game
 
     async def execute_showdown_flip(self, game_id: int):
         ...
