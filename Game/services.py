@@ -13,8 +13,7 @@ class GameService:
         self.session = session
         self.wallet_service = wallet_service
 
-        # Public API
-
+    # ─── Public API ───────────────────────────────────────────────
     async def join_game(self, user_id: int, choice: str) -> GamePlayer:
         self._validate_choice(choice)
 
@@ -65,10 +64,7 @@ class GameService:
         if game.status != "open":
             raise ValueError("Cannot choose a side in a game that is not open")
 
-        result = await self.session.execute(select(GamePlayer)
-                                             .where(GamePlayer.user_id == user_id,
-                                                    GamePlayer.game_id == game_id))
-        player = result.scalar_one_or_none()
+        player = await self._get_game_player(game_id, user_id)
 
         if player is None:
             raise ValueError("No player available to choose")
@@ -115,40 +111,25 @@ class GameService:
         if game.status not in ("open", "active"):
             raise ValueError("Cannot flip in this game state")
 
-        # Increment round count for everyone
+        # Increment round count for all alive players
         for player in players:
             player.round_number += 1
 
+        # All players chose the same side → trigger showdown
         if len({p.choice for p in players}) == 1:
             game.status = "showdown_pending"
             await self.session.flush()
             return game
 
-        # Normal flip
-        winning_side = self._flip_coin()
-
-        # Apply elimination logic
-        for player in players:
-            if player.choice != winning_side:
-                player.is_eliminated = True
-                player.eliminated_at = datetime.now(timezone.utc)
-
-        # Set initial player count
+        # Set initial player count on first flip
         if game.initial_player_count is None:
             game.initial_player_count = len(players)
+            game.prize_pool *= 0.98
 
-        survivors = [p for p in players if not p.is_eliminated]
-        game.current_player_count = len(survivors)
-
-        # One survivor → finished
-        if len(survivors) == 1:
-            game.status = "finished"
-        # ≤ 5% survivors → showdown
-        elif game.current_player_count / game.initial_player_count <= 0.05:
-            game.status = "showdown_pending"
-        # Otherwise → game continues normally
-        else:
-            game.status = "active"
+        # Flip coin, eliminate losers, determine next state
+        winning_side = self._flip_coin()
+        survivors = self._apply_eliminations(players, winning_side)
+        self._determine_next_state(game, survivors)
 
         await self.session.flush()
         return game
@@ -176,24 +157,22 @@ class GameService:
         # Survivors only
         players = await self._get_players_for_game(game_id)
 
-        # 1. Split into takers and continuers
+        # 1. Split into takers and continuers. Players who haven't decided are treated as continuers.
         takers = [p for p in players if p.cashout_decision == "cashout"]
         continuers = [p for p in players if p.cashout_decision != "cashout"]  # includes undecided
 
         # 2. Process cashouts
+        payout = (game.prize_pool / len(players)).quantize(Decimal("0.01"))
+
         for p in takers:
-            p.is_eliminated = True
-            p.eliminated_at = datetime.now(timezone.utc)
-            await self.cashout(p.user_id, game_id)
+            await self.cashout(p, game, payout)
 
         # 3. Determine next state
         if len(continuers) == 0:
             game.status = "finished"
         elif len(continuers) == 1:
             winner = continuers[0]
-            winner.is_eliminated = True
-            winner.eliminated_at = datetime.now(timezone.utc)
-            await self.cashout(winner.user_id, game_id)
+            await self.cashout(winner, game, game.prize_pool)
             game.status = "finished"
         else:
             game.status = "showdown_active"
@@ -202,12 +181,45 @@ class GameService:
         return game
 
     async def execute_showdown_flip(self, game_id: int):
-        ...
+        game = await self._get_game_by_id(game_id)
 
-    async def cashout(self, user_id: int, game_id: int) -> Decimal:
-        ...
+        if game.status != "showdown_active":
+            raise ValueError("Showdown is not active")
 
-    # Internal helpers
+        players = await self._get_players_for_game(game_id)
+
+        for p in players:
+            p.round_number += 1
+
+        winning_side = self._flip_coin()
+
+        # Invalid flip: nobody chose the winning side → nothing happens
+        if all(p.choice != winning_side for p in players):
+            return self._set_game_state(game, "showdown_active")
+
+        survivors = self._apply_eliminations(players, winning_side)
+
+        if len(survivors) == 1:
+            winner = survivors[0]
+            await self.cashout(winner, game, game.prize_pool)
+            return self._set_game_state(game, "finished")
+
+        return self._set_game_state(game,"showdown_active")
+
+    async def cashout(self, player: GamePlayer, game: Game, payout: Decimal) -> Decimal:
+        if player.is_eliminated:
+            raise ValueError("Eliminated players cannot cash out")
+
+        if game.status not in ("showdown_active", "finished"):
+            raise ValueError("Cannot cash out in this game state")
+
+        player.is_eliminated = True
+        player.eliminated_at = datetime.now(timezone.utc)
+
+        await self.wallet_service.credit(player.user_id, payout)
+        await self.session.flush()
+        return payout
+
     async def create_game(self, flip_time: datetime) -> Game:
         new_game = Game(status="open",
                         start_date=datetime.now(timezone.utc),
@@ -221,6 +233,7 @@ class GameService:
         await self.session.flush()
         return new_game
 
+    # ─── Internal Helpers ─────────────────────────────────────────
     async def _get_game_by_id(self, game_id: int, lock: bool = True) -> Game:
         query = select(Game).where(Game.id == game_id)
         if lock:
@@ -255,6 +268,36 @@ class GameService:
                                              .where(GamePlayer.game_id == game_id,
                                                     GamePlayer.is_eliminated.is_(False)))
         return list(result.scalars().all())
+
+    async def _set_game_state(self,game: Game, state: str) -> Game:
+        """Utility to set game state with validation."""
+        if state not in ("open", "active", "showdown_pending", "showdown_active", "finished"):
+            raise ValueError("Invalid game state")
+        game.status = state
+        await self.session.flush()
+        return game
+
+    # ─── Static Utilities ─────────────────────────────────────────
+    @staticmethod
+    def _apply_eliminations(players: list[GamePlayer], winning_side: str) -> list[GamePlayer]:
+        """Marks losing players as eliminated. Returns list of survivors."""
+        for player in players:
+            if player.choice != winning_side:
+                player.is_eliminated = True
+                player.eliminated_at = datetime.now(timezone.utc)
+        return [p for p in players if not p.is_eliminated]
+
+    @staticmethod
+    def _determine_next_state(game: Game, survivors: list[GamePlayer]) -> None:
+        """Updates game status and player count based on remaining survivors."""
+        game.current_player_count = len(survivors)
+
+        if len(survivors) == 1:
+            game.status = "finished"
+        elif game.current_player_count / game.initial_player_count <= 0.05:
+            game.status = "showdown_pending"
+        else:
+            game.status = "active"
 
     @staticmethod
     def _flip_coin() -> str:
