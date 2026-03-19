@@ -124,7 +124,8 @@ class GameService:
         # Set initial player count on first flip
         if game.initial_player_count is None:
             game.initial_player_count = len(players)
-            game.prize_pool *= 0.98
+            game.prize_pool *= Decimal("0.98")
+            game.prize_pool = game.prize_pool.quantize(Decimal("0.01"))
 
         # Flip coin, eliminate losers, determine next state
         winning_side = self._flip_coin()
@@ -163,6 +164,8 @@ class GameService:
 
         # 2. Process cashouts
         payout = (game.prize_pool / len(players)).quantize(Decimal("0.01"))
+        total_payout = payout * len(takers)
+        game.prize_pool -= total_payout
 
         for p in takers:
             await self.cashout(p, game, payout)
@@ -172,8 +175,8 @@ class GameService:
             game.status = "finished"
         elif len(continuers) == 1:
             winner = continuers[0]
-            await self.cashout(winner, game, game.prize_pool)
             game.status = "finished"
+            await self.cashout(winner, game, game.prize_pool)
         else:
             game.status = "showdown_active"
 
@@ -201,16 +204,18 @@ class GameService:
 
         if len(survivors) == 1:
             winner = survivors[0]
+            game = await self._set_game_state(game, "finished")
             await self.cashout(winner, game, game.prize_pool)
-            return self._set_game_state(game, "finished")
+            return game
 
+        game.current_player_count = len(survivors)
         return self._set_game_state(game,"showdown_active")
 
     async def cashout(self, player: GamePlayer, game: Game, payout: Decimal) -> Decimal:
         if player.is_eliminated:
             raise ValueError("Eliminated players cannot cash out")
 
-        if game.status not in ("showdown_active", "finished"):
+        if game.status not in ("showdown_pending", "finished"):
             raise ValueError("Cannot cash out in this game state")
 
         player.is_eliminated = True
