@@ -209,7 +209,7 @@ class GameService:
             return game
 
         game.current_player_count = len(survivors)
-        return self._set_game_state(game,"showdown_active")
+        return self._set_game_state(game, "showdown_active")
 
     async def cashout(self, player: GamePlayer, game: Game, payout: Decimal) -> Decimal:
         if player.is_eliminated:
@@ -237,6 +237,20 @@ class GameService:
         self.session.add(new_game)
         await self.session.flush()
         return new_game
+
+    async def get_active_games(self) -> List[Game]:
+        result = await self.session.execute(select(Game).where(Game.status.in_(["open", "active", "showdown_pending"])).order_by(Game.id.desc()))
+        return list(result.scalars().all())
+
+    async def get_showdown_pending_games(self) -> List[Game]:
+        """Returns games waiting for players to make cashout/continue decisions."""
+        result = await self.session.execute(select(Game).where(Game.status == "showdown_pending").order_by(Game.id.desc()))
+        return list(result.scalars().all())
+
+    async def get_showdown_active_games(self) -> List[Game]:
+        """Returns games in active showdown phase (ready for execute_showdown_flip)."""
+        result = await self.session.execute(select(Game).where(Game.status == "showdown_active").order_by(Game.id.desc()))
+        return list(result.scalars().all())
 
     # ─── Internal Helpers ─────────────────────────────────────────
     async def _get_game_by_id(self, game_id: int, lock: bool = True) -> Game:
@@ -274,7 +288,7 @@ class GameService:
                                                     GamePlayer.is_eliminated.is_(False)))
         return list(result.scalars().all())
 
-    async def _set_game_state(self,game: Game, state: str) -> Game:
+    async def _set_game_state(self, game: Game, state: str) -> Game:
         """Utility to set game state with validation."""
         if state not in ("open", "active", "showdown_pending", "showdown_active", "finished"):
             raise ValueError("Invalid game state")
