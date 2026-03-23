@@ -31,7 +31,7 @@ class GamePlayer(Base):
     game_id = Column(Integer, ForeignKey("games.id", ondelete="CASCADE"))
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
 
-    choice = Column(String, nullable=True)  # "heads" or "tails"
+    side = Column(String, nullable=True)  # "heads" or "tails"
     cashout_decision = Column(String, nullable=True)   # "take" or "continue"
     round_number = Column(Integer, nullable=False, default=1)
 

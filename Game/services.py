@@ -14,8 +14,8 @@ class GameService:
         self.wallet_service = wallet_service
 
     # ─── Public API ───────────────────────────────────────────────
-    async def join_game(self, user_id: int, choice: str) -> GamePlayer:
-        self._validate_choice(choice)
+    async def join_game(self, user_id: int, side: str) -> GamePlayer:
+        self._validate_side(side)
 
         game = await self.get_open_game(lock=True)
 
@@ -40,7 +40,7 @@ class GameService:
 
         joined_player = GamePlayer(game_id=game.id,
                                    user_id=user_id,
-                                   choice=choice,
+                                   side=side,
                                    round_number=1,
                                    is_eliminated=False,
                                    eliminated_at=None)
@@ -53,33 +53,27 @@ class GameService:
         await self.session.flush()
         return joined_player
 
-    async def choose_side(self, user_id: int, game_id: int, choice: str):
-        self._validate_choice(choice)
+    async def choose_side(self, user_id: int, game_id: int, side: str):
+        self._validate_side(side)
 
-        game = await self._get_game_by_id(game_id)
+        game = await self._get_game_by_id(game_id, lock=False)
 
-        if game is None:
-            raise ValueError("game does not exist")
-
-        if game.status != "open":
-            raise ValueError("Cannot choose a side in a game that is not open")
+        if game.status in ("showdown_pending", "finished"):
+            raise ValueError("Cannot choose side in this game state")
 
         player = await self._get_game_player(game_id, user_id)
-
-        if player is None:
-            raise ValueError("No player available to choose")
 
         if player.is_eliminated:
             raise ValueError("Eliminated players cannot choose a side")
 
-        player.choice = choice
+        player.side = side
         await self.session.flush()
 
         return await self.get_percentages(game_id)
 
     async def get_percentages(self, game_id: int) -> dict:
         result = await self.session.execute(
-            select(GamePlayer.choice)
+            select(GamePlayer.side)
             .where(GamePlayer.game_id == game_id,
                    GamePlayer.is_eliminated.is_(False))
         )
@@ -116,7 +110,7 @@ class GameService:
             player.round_number += 1
 
         # All players chose the same side → trigger showdown
-        if len({p.choice for p in players}) == 1:
+        if len({p.side for p in players}) == 1:
             game.status = "showdown_pending"
             await self.session.flush()
             return game
@@ -136,15 +130,18 @@ class GameService:
         return game
 
     async def set_showdown_decision(self, user_id: int, game_id: int, decision: str):
-        player = await self._get_game_player(game_id, user_id)
+        if decision not in ("cashout", "continue"):
+            raise ValueError("Decision must be 'cashout' or 'continue'")
+
         game = await self._get_game_by_id(game_id)
+
+        if game.status != "showdown_pending":
+            raise ValueError("Showdown is not active yet")
+
+        player = await self._get_game_player(game_id, user_id)
 
         if player.is_eliminated:
             raise ValueError("Eliminated players cannot make a showdown decision")
-        if game.status != "showdown_pending":
-            raise ValueError("Showdown is not active yet")
-        if decision not in ("cashout", "continue"):
-            raise ValueError("Decision must be 'cashout' or 'continue'")
 
         player.cashout_decision = decision
         await self.session.flush()
@@ -197,7 +194,7 @@ class GameService:
         winning_side = self._flip_coin()
 
         # Invalid flip: nobody chose the winning side → nothing happens
-        if all(p.choice != winning_side for p in players):
+        if all(p.side != winning_side for p in players):
             return self._set_game_state(game, "showdown_active")
 
         survivors = self._apply_eliminations(players, winning_side)
@@ -301,7 +298,7 @@ class GameService:
     def _apply_eliminations(players: list[GamePlayer], winning_side: str) -> list[GamePlayer]:
         """Marks losing players as eliminated. Returns list of survivors."""
         for player in players:
-            if player.choice != winning_side:
+            if player.side != winning_side:
                 player.is_eliminated = True
                 player.eliminated_at = datetime.now(timezone.utc)
         return [p for p in players if not p.is_eliminated]
@@ -323,6 +320,6 @@ class GameService:
         return "heads" if secrets.randbelow(2) == 0 else "tails"
 
     @staticmethod
-    def _validate_choice(choice: str):
+    def _validate_side(choice: str):
         if choice not in ("heads", "tails"):
-            raise ValueError("Choice must be 'heads' or 'tails'")
+            raise ValueError("Side must be 'heads' or 'tails'")
