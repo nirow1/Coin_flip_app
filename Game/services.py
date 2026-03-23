@@ -9,12 +9,11 @@ from decimal import Decimal
 
 
 class GameService:
-    def __init__(self, session: AsyncSession, wallet_service: WalletService):
+    def __init__(self, session: AsyncSession):
         self.session = session
-        self.wallet_service = wallet_service
 
     # ─── Public API ───────────────────────────────────────────────
-    async def join_game(self, user_id: int, side: str) -> GamePlayer:
+    async def join_game(self, user_id: int, side: str, wallet: WalletService) -> GamePlayer:
         self._validate_side(side)
 
         game = await self.get_open_game(lock=True)
@@ -36,7 +35,7 @@ class GameService:
             if now >= lockout_start:
                 raise ValueError("Joining is disabled 5 minutes before the flip")
 
-        await self.wallet_service.debit(user_id, Decimal("1.00"))
+        await wallet.debit(user_id, Decimal("1.00"))
 
         joined_player = GamePlayer(game_id=game.id,
                                    user_id=user_id,
@@ -90,11 +89,11 @@ class GameService:
         }
 
 
-    async def get_player_active_games(self, user_id: int) -> List[Game]:
+    async def get_players_active_games(self, user_id: int) -> List[Game]:
         result = await self.session.execute(select(Game)
                                              .join(GamePlayer, Game.id == GamePlayer.game_id)
                                              .where(GamePlayer.user_id == user_id,
-                                                    Game.status.in_(["open", "active"]),
+                                                    Game.status.in_(["open", "active", "showdown_pending", "showdown_active"]),
                                                     GamePlayer.is_eliminated.is_(False)))
         return list(result.scalars().all())
 
@@ -146,7 +145,7 @@ class GameService:
         player.cashout_decision = decision
         await self.session.flush()
 
-    async def try_start_showdown(self, game_id: int) -> Optional[Game]:
+    async def try_start_showdown(self, game_id: int, wallet: WalletService) -> Optional[Game]:
         game = await self._get_game_by_id(game_id)
 
         if game.status != "showdown_pending":
@@ -165,7 +164,7 @@ class GameService:
         game.prize_pool -= total_payout
 
         for p in takers:
-            await self.cashout(p, game, payout)
+            await self.cashout(p, game, payout, wallet)
 
         # 3. Determine next state
         if len(continuers) == 0:
@@ -173,14 +172,14 @@ class GameService:
         elif len(continuers) == 1:
             winner = continuers[0]
             game.status = "finished"
-            await self.cashout(winner, game, game.prize_pool)
+            await self.cashout(winner, game, game.prize_pool, wallet)
         else:
             game.status = "showdown_active"
 
         await self.session.flush()
         return game
 
-    async def execute_showdown_flip(self, game_id: int):
+    async def execute_showdown_flip(self, game_id: int, wallet: WalletService):
         game = await self._get_game_by_id(game_id)
 
         if game.status != "showdown_active":
@@ -202,13 +201,13 @@ class GameService:
         if len(survivors) == 1:
             winner = survivors[0]
             game = await self._set_game_state(game, "finished")
-            await self.cashout(winner, game, game.prize_pool)
+            await self.cashout(winner, game, game.prize_pool, wallet)
             return game
 
         game.current_player_count = len(survivors)
         return self._set_game_state(game, "showdown_active")
 
-    async def cashout(self, player: GamePlayer, game: Game, payout: Decimal) -> Decimal:
+    async def cashout(self, player: GamePlayer, game: Game, payout: Decimal, wallet: WalletService) -> Decimal:
         if player.is_eliminated:
             raise ValueError("Eliminated players cannot cash out")
 
@@ -218,7 +217,7 @@ class GameService:
         player.is_eliminated = True
         player.eliminated_at = datetime.now(timezone.utc)
 
-        await self.wallet_service.credit(player.user_id, payout)
+        await wallet.credit(player.user_id, payout)
         await self.session.flush()
         return payout
 
@@ -235,6 +234,10 @@ class GameService:
         await self.session.flush()
         return new_game
 
+    async def get_all_games(self) -> List[Game]:
+        result = await self.session.execute(select(Game).order_by(Game.id.desc()))
+        return list(result.scalars().all())
+
     async def get_active_games(self) -> List[Game]:
         result = await self.session.execute(select(Game).where(Game.status.in_(["open", "active", "showdown_pending"])).order_by(Game.id.desc()))
         return list(result.scalars().all())
@@ -248,6 +251,12 @@ class GameService:
         """Returns games in active showdown phase (ready for execute_showdown_flip)."""
         result = await self.session.execute(select(Game).where(Game.status == "showdown_active").order_by(Game.id.desc()))
         return list(result.scalars().all())
+
+    async def get_game_status(self, game_id: int) -> str:
+        game = await self._get_game_by_id(game_id, lock=False)
+        return game.status
+    async def get_game_player(self, game_id: int, user_id: int) -> GamePlayer:
+        return await self._get_game_player(game_id, user_id)
 
     # ─── Internal Helpers ─────────────────────────────────────────
     async def _get_game_by_id(self, game_id: int, lock: bool = True) -> Game:
