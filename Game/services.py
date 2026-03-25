@@ -238,6 +238,10 @@ class GameService:
         result = await self.session.execute(select(Game).order_by(Game.id.desc()))
         return list(result.scalars().all())
 
+    async def get_all_players(self, game_id: int) -> List[GamePlayer]:
+        result = await self.session.execute(select(GamePlayer).where(GamePlayer.game_id == game_id))
+        return list(result.scalars().all())
+
     async def get_active_games(self) -> List[Game]:
         result = await self.session.execute(select(Game).where(Game.status.in_(["open", "active", "showdown_pending"])).order_by(Game.id.desc()))
         return list(result.scalars().all())

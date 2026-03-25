@@ -1,5 +1,9 @@
+from datetime import timedelta, date
 from decimal import Decimal
+from unittest.mock import patch
 
+from Auth.models import User
+from Core.security import hash_password
 from Game.models import GamePlayer
 from Wallet.services import WalletService
 from Game.services import GameService
@@ -66,4 +70,98 @@ async def test_choose_side_success(session, test_user, make_game):
     # Assert: player's side is updated
     fetch = await service.get_game_player(game.id, test_user.id)
     assert fetch.side == "tails"
+
+async def test_get_players_active_games(session, test_user, make_game):
+    service = GameService(session)
+
+    games = [await make_game("active"), await make_game("active")]
+
+    for game in games:
+        player = GamePlayer(
+            game_id=game.id,
+            user_id=test_user.id,
+            side="heads",
+            round_number=1,
+            is_eliminated=False,
+        )
+        session.add(player)
+    await session.flush()
+
+    joined_games = await service.get_players_active_games(test_user.id)
+
+    game_ids = {g.id for g in joined_games}
+    assert game_ids == {games[0].id, games[1].id}
+
+async def test_execute_flip_finished(session, make_game, create_test_user):
+    service = GameService(session)
+    game = await make_game("active", timedelta(seconds=1))
+
+    # create_test_user flushes and commits internally — user.id is set, session.add not needed
+    user1 = await create_test_user("testuser1@test.com")
+    user2 = await create_test_user("testuser2@test.com")
+
+    # Add two players on opposite sides so one always gets eliminated
+    session.add(GamePlayer(game_id=game.id, user_id=user1.id,
+                           side="heads", round_number=1, is_eliminated=False))
+    session.add(GamePlayer(game_id=game.id, user_id=user2.id,
+                           side="tails", round_number=1, is_eliminated=False))
+    await session.flush()
+
+    game_after_flip = await service.execute_flip(game.id)
+
+    # Game should be finished — 2 players, opposite sides, exactly 1 survivor
+    assert game_after_flip.status == "finished"
+
+    # Exactly one player eliminated, one survivor
+    p1 = await service.get_game_player(game.id, user1.id)
+    p2 = await service.get_game_player(game.id, user2.id)
+
+    survivors = [p for p in [p1, p2] if not p.is_eliminated]
+    eliminated = [p for p in [p1, p2] if p.is_eliminated]
+
+    assert len(survivors) == 1
+    assert len(eliminated) == 1
+    assert eliminated[0].eliminated_at is not None
+    
+async def test_execute_flip_mixed_choices(session, make_game, create_test_user):
+    service = GameService(session)
+    game = await make_game("active", timedelta(seconds=1))
+
+    # 5 tails, 5 heads — equal split guarantees exactly 5 eliminated regardless of flip result
+    for i in range(10):
+        user = await create_test_user(f"test_user{i}@test.com")
+        side = "tails" if i < 5 else "heads"
+        session.add(GamePlayer(game_id=game.id, user_id=user.id,
+                               side=side, round_number=1, is_eliminated=False))
+
+    await session.flush()
+
+    game_after_flip = await service.execute_flip(game.id)
+
+    # 5 survivors out of 10 → 5/10 = 0.5 > 0.05 threshold → status stays active
+    assert game_after_flip.status == "active"
+
+    players = await service.get_all_players(game.id)
+
+    eliminated = [p for p in players if p.is_eliminated]
+
+    assert len(eliminated) == 5
+
+async def test_execute_flip_showdown_trigger(session, make_game, create_test_user):
+    service = GameService(session)
+    game = await make_game("active", timedelta(seconds=1))
+
+    # 5 tails, 5 heads — equal split guarantees exactly 5 eliminated regardless of flip result
+    for i in range(100):
+        user = await create_test_user(f"test_user{i}@test.com")
+        side = "tails" if i < 96 else "heads"
+        session.add(GamePlayer(game_id=game.id, user_id=user.id,
+                               side=side, round_number=1, is_eliminated=False))
+
+    await session.flush()
+
+    with patch.object(GameService, "_flip_coin", return_value="heads"):
+        game_after_flip = await service.execute_flip(game.id)
+
+    assert game_after_flip.status == "showdown_pending"
 

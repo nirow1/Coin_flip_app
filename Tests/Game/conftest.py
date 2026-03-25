@@ -64,6 +64,23 @@ async def test_user(session):
     return user
 
 @pytest_asyncio.fixture(loop_scope="session")
+async def create_test_user(session):
+    async def _create_test_user(email: str) -> User:
+        user = User(
+            email=email,
+            password_hash=hash_password("Secret123!"),
+            country="CZ",
+            dob=date(2000, 1, 1)
+        )
+        session.add(user)
+        await session.flush()
+        await session.commit()
+        await session.refresh(user)
+        return user
+
+    return _create_test_user
+
+@pytest_asyncio.fixture(loop_scope="session")
 async def test_wallet(session, test_user):
     wallet = Wallet(user_id=test_user.id, balance=Decimal("0.00"))
     session.add(wallet)
