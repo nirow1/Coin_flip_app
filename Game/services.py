@@ -104,21 +104,21 @@ class GameService:
         if game.status not in ("open", "active"):
             raise ValueError("Cannot flip in this game state")
 
-        # Increment round count for all alive players
+        # Increment round count for all players and assign random side to those who haven't chosen yet
         for player in players:
             player.round_number += 1
+            if player.side is None:
+                player.side = self._flip_coin()
 
         # All players chose the same side → trigger showdown
         if len({p.side for p in players}) == 1:
             game.status = "showdown_pending"
+            self._set_initial_player_count(game, len(players))
             await self.session.flush()
             return game
 
         # Set initial player count on first flip
-        if game.initial_player_count is None:
-            game.initial_player_count = len(players)
-            game.prize_pool *= Decimal("0.98")
-            game.prize_pool = game.prize_pool.quantize(Decimal("0.01"))
+        self._set_initial_player_count(game, len(players))
 
         # Flip coin, eliminate losers, determine next state
         winning_side = self._flip_coin()
@@ -194,7 +194,7 @@ class GameService:
 
         # Invalid flip: nobody chose the winning side → nothing happens
         if all(p.side != winning_side for p in players):
-            return self._set_game_state(game, "showdown_active")
+            return await self._set_game_state(game, "showdown_active")
 
         survivors = self._apply_eliminations(players, winning_side)
 
@@ -205,7 +205,7 @@ class GameService:
             return game
 
         game.current_player_count = len(survivors)
-        return self._set_game_state(game, "showdown_active")
+        return await self._set_game_state(game, "showdown_active")
 
     async def cashout(self, player: GamePlayer, game: Game, payout: Decimal, wallet: WalletService) -> Decimal:
         if player.is_eliminated:
@@ -309,12 +309,16 @@ class GameService:
     # ─── Static Utilities ─────────────────────────────────────────
     @staticmethod
     def _apply_eliminations(players: list[GamePlayer], winning_side: str) -> list[GamePlayer]:
-        """Marks losing players as eliminated. Returns list of survivors."""
+        """Marks losing players as eliminated. Returns list of survivors with deleted side."""
+        survivors = []
         for player in players:
             if player.side != winning_side:
                 player.is_eliminated = True
                 player.eliminated_at = datetime.now(timezone.utc)
-        return [p for p in players if not p.is_eliminated]
+            else:
+                player.side = None
+                survivors.append(player)
+        return survivors
 
     @staticmethod
     def _determine_next_state(game: Game, survivors: list[GamePlayer]) -> None:
@@ -336,3 +340,10 @@ class GameService:
     def _validate_side(choice: str):
         if choice not in ("heads", "tails"):
             raise ValueError("Side must be 'heads' or 'tails'")
+
+    @staticmethod
+    def _set_initial_player_count(game: Game, count: int):
+        if game.initial_player_count is None:
+            game.initial_player_count = count
+            game.prize_pool *= Decimal("0.98")
+            game.prize_pool = game.prize_pool.quantize(Decimal("0.01"))

@@ -1,9 +1,7 @@
-from datetime import timedelta, date
+from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch
-
-from Auth.models import User
-from Core.security import hash_password
+from fastapi import HTTPException
 from Game.models import GamePlayer
 from Wallet.services import WalletService
 from Game.services import GameService
@@ -37,7 +35,7 @@ async def test_join_game_fail(session, test_user, open_game, test_wallet):
     wallet = WalletService(session)
 
     # Fail 1: insufficient funds — wallet has 0.00 balance, debit of 1.00 is rejected
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(HTTPException) as exc_info:
         await service.join_game(test_user.id, "heads", wallet)
     assert exc_info.value.status_code == 400
 
@@ -165,3 +163,46 @@ async def test_execute_flip_showdown_trigger(session, make_game, create_test_use
 
     assert game_after_flip.status == "showdown_pending"
 
+async def test_execute_flip_auto_assign(session, make_game, create_test_user):
+    service = GameService(session)
+    game = await make_game("active", timedelta(seconds=1))
+
+    # 7 players chose "tails", 3 players have no side — auto-assign will pick for them
+    for i in range(10):
+        user = await create_test_user(f"test_user{i}@test.com")
+        side = "tails" if i < 7 else None
+        session.add(GamePlayer(game_id=game.id, user_id=user.id,
+                               side=side, round_number=1, is_eliminated=False))
+    await session.flush()
+
+    # First 3 calls: auto-assign "heads" to the 3 None players
+    # 4th call: actual flip returns "tails" → tails players survive, heads players eliminated
+    with patch.object(GameService, "_flip_coin", side_effect=["heads", "heads", "heads", "tails"]):
+        game_after_flip = await service.execute_flip(game.id)
+
+    players = await service.get_all_players(game.id)
+    eliminated = [p for p in players if p.is_eliminated]
+    survivors = [p for p in players if not p.is_eliminated]
+
+    # Auto-assign: 3 None players were assigned "heads" and lost the flip
+    assert len(eliminated) == 3
+    assert all(p.side == "heads" for p in eliminated)
+
+    # Side reset: all survivors have side reset to None for next round
+    assert len(survivors) == 7
+    assert all(p.side is None for p in survivors)
+
+async def test_execute_flip_all_one_side(session, make_game, create_test_user):
+    service = GameService(session)
+    game = await make_game("active", timedelta(seconds=1))
+
+    for i in range(10):
+        user = await create_test_user(f"test_user{i}@test.com")
+        side = "tails"
+        session.add(GamePlayer(game_id=game.id, user_id=user.id,
+                               side=side, round_number=1, is_eliminated=False))
+    await session.flush()
+    
+    game_after_flip = await service.execute_flip(game.id)
+    
+    assert game_after_flip.status == "showdown_pending"
