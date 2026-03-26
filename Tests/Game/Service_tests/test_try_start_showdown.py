@@ -45,6 +45,7 @@ async def test_try_start_showdown_success(session, test_user, test_wallet, creat
 
     assert showdown_game.status == "showdown_active"
     assert len(remaining_players) == 5
+    assert showdown_game.prize_pool == Decimal("5.00")
 
     # test_user received payout: 11.00 / 11 players = 1.00
     balance_after = (await wallet.get_wallet(test_user.id)).balance
