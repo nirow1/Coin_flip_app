@@ -114,6 +114,9 @@ class GameService:
         if len({p.side for p in players}) == 1:
             game.status = "showdown_pending"
             self._set_initial_player_count(game, len(players))
+            # Reset sides so players get a fresh choice when showdown_active begins
+            for player in players:
+                player.side = None
             await self.session.flush()
             return game
 
@@ -163,8 +166,8 @@ class GameService:
         total_payout = payout * len(takers)
         game.prize_pool -= total_payout
 
-        for p in takers:
-            await self.cashout(p, game, payout, wallet)
+        for player in takers:
+            await self.cashout(player, game, payout, wallet)
 
         # 3. Determine next state
         if len(continuers) == 0:
@@ -187,13 +190,17 @@ class GameService:
 
         players = await self._get_players_for_game(game_id)
 
-        for p in players:
-            p.round_number += 1
+        for player in players:
+            player.round_number += 1
+            if player.side is None:
+                player.side = self._flip_coin()
 
         winning_side = self._flip_coin()
 
-        # Invalid flip: nobody chose the winning side → nothing happens
+        # Invalid flip: nobody chose the winning side → reset sides and retry next round
         if all(p.side != winning_side for p in players):
+            for player in players:
+                player.side = None
             return await self._set_game_state(game, "showdown_active")
 
         survivors = self._apply_eliminations(players, winning_side)
