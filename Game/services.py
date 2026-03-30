@@ -282,11 +282,11 @@ class GameService:
         return game
 
     async def get_open_game(self, lock: bool = False) -> Optional[Game]:
-        query = select(Game).where(Game.status == "open")
+        query = select(Game).where(Game.status == "open").order_by(Game.flip_time.asc())
         if lock:
             query = query.with_for_update()
         result = await self.session.execute(query)
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     async def _get_game_player(self, game_id: int, user_id: int) -> GamePlayer:
         result = await self.session.execute(select(GamePlayer)

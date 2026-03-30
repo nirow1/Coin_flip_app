@@ -3,12 +3,14 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from typing import AsyncGenerator
 from Auth.models import User
-from Core.security import hash_password
+from Core.security import hash_password, create_access_token
 from Game.models import Game
 from Wallet.models import Wallet
 from config import settings
 import pytest_asyncio
-from db import Base
+from db import Base, get_session
+from main import app
+from httpx import AsyncClient, ASGITransport
 
 
 TEST_DATABASE_URL = settings.TEST_DATABASE_URL
@@ -123,3 +125,79 @@ async def make_game(session):
         return game
 
     return _make_game
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def create_funded_user(session):
+    """Factory fixture: creates a fresh user with a wallet. Call with a unique email per test."""
+    async def _create(email: str, balance: Decimal = Decimal("10.00")):
+        user = User(
+            email=email,
+            password_hash=hash_password("Secret123!"),
+            country="CZ",
+            dob=date(2000, 1, 1)
+        )
+        session.add(user)
+        await session.flush()
+        await session.refresh(user)
+
+        wallet = Wallet(user_id=user.id, balance=balance)
+        session.add(wallet)
+        await session.flush()
+
+        token = create_access_token({"sub": str(user.id)})
+        return {"user": user, "token": token}
+
+    return _create
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def client(session):
+    async def override_get_session():
+        yield session
+
+    app.dependency_overrides[get_session] = override_get_session
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+
+    app.dependency_overrides.pop(get_session, None)
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def auth_user(session):
+    """A user whose wallet has $0.00 — used to test insufficient balance scenarios."""
+    user = User(
+        email="router_user@test.com",
+        password_hash=hash_password("Secret123!"),
+        country="CZ",
+        dob=date(2000, 1, 1)
+    )
+    session.add(user)
+    await session.flush()
+    await session.refresh(user)
+
+    wallet = Wallet(user_id=user.id, balance=Decimal("10.00"))
+    session.add(wallet)
+    await session.flush()
+
+    token = create_access_token({"sub": str(user.id)})
+    return {"user": user, "token": token}
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def broke_auth_user(session):
+    """A user whose wallet has $0.00 — used to test insufficient balance scenarios."""
+    user = User(
+        email="broke_router_user@test.com",
+        password_hash=hash_password("Secret123!"),
+        country="CZ",
+        dob=date(2000, 1, 1)
+    )
+    session.add(user)
+    await session.flush()
+    await session.refresh(user)
+
+    wallet = Wallet(user_id=user.id, balance=Decimal("0.00"))
+    session.add(wallet)
+    await session.flush()
+
+    token = create_access_token({"sub": str(user.id)})
+    return {"user": user, "token": token}

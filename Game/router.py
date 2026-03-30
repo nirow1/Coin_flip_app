@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from Auth.dependencies import get_current_user, get_current_admin
 from Wallet.services import WalletService
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from Game.services import GameService
 from Game.schemas import GameResponse, GamePlayerResponse
 from Auth.models import User
@@ -14,7 +14,10 @@ router = APIRouter()
 async def join_game(side: str, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     wallet_service = WalletService(session)
     game_service = GameService(session)
-    await game_service.join_game(user.id, side, wallet_service)
+    try:
+        await game_service.join_game(user.id, side, wallet_service)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     return {"message": "Joined game successfully"}
 
 @router.post("/choose")
