@@ -25,9 +25,9 @@ async def choose_side(side: str, game_id: int, user: User = Depends(get_current_
     game_service = GameService(session)
     try:
         response = await game_service.choose_side(user.id, game_id, side)
-        return {"message": "Side chosen successfully", "heads": response["heads"], "tails": response["tails"]}
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return {"message": "Side chosen successfully", "heads": response["heads"], "tails": response["tails"]}
 
 
 @router.post("/showdown/decision")
