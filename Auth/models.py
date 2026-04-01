@@ -16,5 +16,5 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # The corresponding Wallet model is expected to define
-    # `user = relationship("User", back_populates="wallet")`.
     wallet = relationship("Wallet", back_populates="user", uselist=False)
+    solana_wallet = relationship("UserSolanaWallet", back_populates="user", uselist=False)

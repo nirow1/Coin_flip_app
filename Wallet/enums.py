@@ -7,4 +7,6 @@ class TransactionType(str, enum.Enum):
     WIN = "win"
     PURCHASE = "purchase"
     REFUND = "refund"
+    DEPOSIT_SOLANA = "deposit_solana"
+    WITHDRAW_SOLANA = "withdraw_solana"
 

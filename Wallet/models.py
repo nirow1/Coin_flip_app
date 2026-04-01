@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, ForeignKey, Numeric, DateTime, func, Enum
+from sqlalchemy import Column, Integer, ForeignKey, Numeric, DateTime, func, Enum, LargeBinary, String
 from sqlalchemy.orm import relationship
 from db import Base
 from Wallet.enums import TransactionType
@@ -26,3 +26,16 @@ class Transaction(Base):
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
     wallet = relationship("Wallet", back_populates="transactions")
+
+
+class UserSolanaWallet(Base):
+    __tablename__ = "user_solana_wallets"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"),unique=True, nullable=False)
+
+    public_key = Column(String, nullable=False)
+    private_key_encrypted = Column(LargeBinary, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    user = relationship("User", back_populates="solana_wallet")
