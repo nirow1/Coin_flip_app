@@ -164,7 +164,7 @@ async def client(session):
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def auth_user(session):
-    """A user whose wallet has $0.00 — used to test insufficient balance scenarios."""
+    """A standard authenticated user with $10.00 wallet balance."""
     user = User(
         email="router_user@test.com",
         password_hash=hash_password("Secret123!"),
@@ -190,6 +190,26 @@ async def broke_auth_user(session):
         password_hash=hash_password("Secret123!"),
         country="CZ",
         dob=date(2000, 1, 1)
+    )
+    session.add(user)
+    await session.flush()
+    await session.refresh(user)
+
+    wallet = Wallet(user_id=user.id, balance=Decimal("0.00"))
+    session.add(wallet)
+    await session.flush()
+
+    token = create_access_token({"sub": str(user.id)})
+    return {"user": user, "token": token}
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def create_test_admin(session):
+    user = User(
+        email="admin_router_user@test.com",  # FIX: was "broke_router_user@test.com" — collided with broke_auth_user
+        password_hash=hash_password("Secret123!"),
+        country="CZ",
+        dob=date(2000, 1, 1),
+        is_admin=True
     )
     session.add(user)
     await session.flush()
