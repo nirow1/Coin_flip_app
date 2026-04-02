@@ -1,10 +1,15 @@
-from Wallet.schemas import WalletResponse, TransactionResponse, AmountRequest
-from fastapi import APIRouter, Depends
+from Wallet.schemas import WalletResponse, TransactionResponse, AmountRequest, SolanaWebhookPayload
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from Auth.dependencies import get_current_user
+from Wallet.models import UserSolanaWallet
 from Wallet.services import WalletService
 from Auth.models import User
 from db import get_session
+from config import settings
+import hmac
+import hashlib
 
 router = APIRouter(prefix="/wallet", tags=["wallet"])
 
@@ -31,3 +36,39 @@ async def get_transactions(current_user: User = Depends(get_current_user), sessi
     wallet_service = WalletService(session)
     transactions = await wallet_service.get_transactions(current_user.id)
     return transactions
+
+#todo: read this and find out what it did
+@router.post("/webhook/solana", status_code=status.HTTP_200_OK)
+async def solana_webhook(
+    payload: SolanaWebhookPayload,
+    request: Request,
+    session: AsyncSession = Depends(get_session)
+):
+    # 1. Verify HMAC signature from webhook provider (e.g. Helius, QuickNode)
+    signature = request.headers.get("x-webhook-signature", "")
+    raw_body = await request.body()
+    expected = hmac.new(
+        settings.SOLANA_WEBHOOK_SECRET.encode(),
+        raw_body,
+        hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook signature")
+
+    # 2. Look up user by destination Solana address
+    result = await session.execute(
+        select(UserSolanaWallet).where(UserSolanaWallet.public_key == payload.destination_address)
+    )
+    solana_wallet = result.scalar_one_or_none()
+    if solana_wallet is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solana address not linked to any user")
+
+    # 3. Credit user — deposit_sol handles tx_hash deduplication internally
+    wallet_service = WalletService(session)
+    await wallet_service.deposit_sol(
+        user_id=solana_wallet.user_id,
+        amount_sol=payload.amount_sol,
+        tx_hash=payload.tx_hash
+    )
+
+    return {"message": "Deposit processed"}

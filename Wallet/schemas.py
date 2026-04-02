@@ -3,6 +3,13 @@ from typing import Annotated
 from datetime import datetime
 from decimal import Decimal
 
+# ...existing code...
+
+class SolanaWebhookPayload(BaseModel):
+    tx_hash: str              # Solana transaction signature — used for deduplication
+    destination_address: str  # recipient's Solana public key
+    amount_sol: Decimal       # amount in SOL
+
 class WalletResponse(BaseModel):
     id: int
     balance: Decimal

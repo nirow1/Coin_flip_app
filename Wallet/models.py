@@ -23,6 +23,7 @@ class Transaction(Base):
     wallet_id = Column(Integer, ForeignKey("wallets.id"), nullable=False)
     amount = Column(Numeric(12, 2), nullable=False)
     type = Column(Enum(TransactionType), nullable=False)
+    tx_hash = Column(String, nullable=True, unique=True)  # Solana tx signature — enforces deduplication
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
     wallet = relationship("Wallet", back_populates="transactions")

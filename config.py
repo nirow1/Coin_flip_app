@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 60
     STRIPE_SECRET_KEY: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
+    SOLANA_WEBHOOK_SECRET: str = ""
 
     class Config:
         env_file = ".env"

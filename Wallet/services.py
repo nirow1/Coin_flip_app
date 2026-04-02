@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import cast
 from Wallet.models import Wallet, Transaction
 from Wallet.enums import TransactionType
+from Core.solana import solana_send_transaction
 from fastapi import HTTPException, status
 
 
@@ -65,6 +66,31 @@ class WalletService:
         await self.session.refresh(transaction)
         await self.session.refresh(wallet)
         return transaction
+
+    async def deposit_sol(self, user_id: int, amount_sol: Decimal, tx_hash: str):
+        credits = amount_sol  # 1 SOL = 1 credit (or your chosen rate)
+
+        return await self.credit(
+            user_id=user_id,
+            amount=credits,
+            transaction_type=TransactionType.DEPOSIT_SOLANA
+        )
+
+    async def withdraw_sol(self, user_id: int, amount_sol: Decimal, destination_address: str):
+        # 1. Debit internal balance
+        await self.debit(
+            user_id=user_id,
+            amount=amount_sol,
+            transaction_type=TransactionType.WITHDRAW_SOLANA
+        )
+
+        # 2. Send SOL on-chain
+        tx_sig = await solana_send_transaction(
+            destination_address,
+            amount_sol
+        )
+
+        return tx_sig
 
     async def credit(self, user_id: int, amount: Decimal, transaction_type: TransactionType = TransactionType.CREDIT) -> Transaction:
         wallet = await self.get_wallet_for_update(user_id)
