@@ -37,7 +37,6 @@ async def get_transactions(current_user: User = Depends(get_current_user), sessi
     transactions = await wallet_service.get_transactions(current_user.id)
     return transactions
 
-#todo: read this and find out what it did
 @router.post("/webhook/solana", status_code=status.HTTP_200_OK)
 async def solana_webhook(
     payload: SolanaWebhookPayload,

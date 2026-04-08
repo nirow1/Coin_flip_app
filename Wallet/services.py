@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import cast
 from Wallet.models import Wallet, Transaction
 from Wallet.enums import TransactionType
-from Core.solana import solana_send_transaction
+from Core.core_solana import solana_send_transaction
 from fastapi import HTTPException, status
 
 
