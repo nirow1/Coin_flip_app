@@ -1,7 +1,6 @@
 from decimal import Decimal
 import asyncio
 import httpx
-from docutils.nodes import title
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from sqlalchemy import select
@@ -156,9 +155,9 @@ class NotificationService:
         await self.notify(user_id, title, message, NotificationType.game_started)
 
     async def notify_game_ended(self, user_id: int, prize_amount: Decimal) -> None:
-        title = "Game ended"
+        title = "Game won!"
         message = f"Your game has ended. You won {prize_amount} credits!"
-        await self.notify(user_id, title, message, NotificationType.game_ended)
+        await self.notify(user_id, title, message, NotificationType.game_won)
 
     async def notify_prize_paid(self, user_id: int, amount: Decimal) -> None:
         title = "Prize paid"
