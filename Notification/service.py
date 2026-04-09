@@ -1,6 +1,7 @@
 from decimal import Decimal
 import asyncio
 import httpx
+from docutils.nodes import title
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from sqlalchemy import select
@@ -124,6 +125,7 @@ class NotificationService:
         if push:
             await self.send_push_notification(user_id, title, message, data={"type": n_type})
 
+    # Later to be implemented
     async def send_email_notification(self, user_id: int, subject: str, body: str) -> None:
         ...
 
@@ -138,36 +140,53 @@ class NotificationService:
 
         await self.notify(user_id, title, message, NotificationType.flip_result)
 
-    async def notify_elimination(self, user_id: int, round_number: int) -> None:
-        ...
-
     async def notify_side_assigned(self, user_id: int, assigned_side: str, game_id: int) -> None:
-        ...
+        title = "Side assigned"
+        message = f"You were assigned to the {assigned_side} side in game {game_id}"
+        await self.notify(user_id, title, message, NotificationType.side_assigned)
 
     async def notify_showdown_activated(self, user_id: int, game_id: int) -> None:
-        ...
+        title = "Showdown activated"
+        message = f"The showdown has been activated in game {game_id}"
+        await self.notify(user_id, title, message, NotificationType.showdown_activated)
 
     async def notify_game_started(self, user_id: int, game_id: int) -> None:
-        ...
+        title = "Game started"
+        message = f"Your game {game_id} has started!"
+        await self.notify(user_id, title, message, NotificationType.game_started)
 
     async def notify_game_ended(self, user_id: int, prize_amount: Decimal) -> None:
-        ...
+        title = "Game ended"
+        message = f"Your game has ended. You won {prize_amount} credits!"
+        await self.notify(user_id, title, message, NotificationType.game_ended)
 
     async def notify_prize_paid(self, user_id: int, amount: Decimal) -> None:
-        ...
+        title = "Prize paid"
+        message = f"Your prize of {amount} credits has been paid out!"
+        await self.notify(user_id, title, message, NotificationType.prize_paid)
 
     async def notify_friend_invite(self, user_id: int, from_username: str, game_id: int) -> None:
-        ...
+        title = "Friend invite"
+        message = f"You were invited by {from_username} to become friends!"
+        await self.notify(user_id, title, message, NotificationType.friend_invite)
 
     async def notify_new_game_available(self, user_id: int, game_id: int) -> None:
-        ...
+        title = "New game available"
+        message = f"A new game with ID {game_id} is now available to join! Join now and win a prize!"
+        await self.notify(user_id, title, message, NotificationType.new_game_available)
 
     async def notify_credit_purchase_confirmed(self, user_id: int, amount: Decimal, method: str) -> None:
-        ...
+        title = "Credit purchase confirmed"
+        message = f"Your purchase of {amount} credits using {method} has been confirmed!"
+        await self.notify(user_id, title, message, NotificationType.credit_purchase_confirmed)
 
     async def notify_wallet_deposit(self, user_id: int, amount: Decimal) -> None:
-        ...
+        title = "Wallet deposit"
+        message = f"Your wallet has been credited with {amount} credits!"
+        await self.notify(user_id, title, message, NotificationType.wallet_deposit)
 
     async def notify_wallet_withdrawal(self, user_id: int, amount: Decimal) -> None:
-        ...
+        title = "Wallet withdrawal"
+        message = f"Your wallet has been debited by {amount} credits!"
+        await self.notify(user_id, title, message, NotificationType.wallet_withdrawal)
 
