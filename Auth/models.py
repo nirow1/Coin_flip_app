@@ -18,3 +18,4 @@ class User(Base):
     # The corresponding Wallet model is expected to define
     wallet = relationship("Wallet", back_populates="user", uselist=False)
     solana_wallet = relationship("UserSolanaWallet", back_populates="user", uselist=False)
+    notifications = relationship("Notification", back_populates="user", uselist=True)
