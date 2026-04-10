@@ -3,7 +3,8 @@ import asyncio
 import httpx
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request as GoogleAuthRequest
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.sql import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from Auth.models import User
@@ -79,6 +80,19 @@ class NotificationService:
         notification.read_at = func.now()
         await self.session.commit()
         return True
+    
+    async def mark_all_read(self, user_id: int) -> bool:
+        try:
+            await self.session.execute(
+                update(Notification)
+                .where(Notification.user_id == user_id, Notification.is_read == False)
+                .values(is_read=True, read_at=func.now())
+            )
+            await self.session.commit()
+        except Exception:
+            await self.session.rollback()
+            return False
+        return True
 
     async def send_push_notification(self, user_id: int, title: str, message: str, data: dict) -> str | None:
         result = await self.session.execute(
@@ -112,11 +126,10 @@ class NotificationService:
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
                 response.raise_for_status()
-            except Exception:
-                pass
-
-        # FCM v1 returns the message name as "projects/{id}/messages/{msg_id}"
-        return response.json()["name"]
+                # FCM v1 returns the message name as "projects/{id}/messages/{msg_id}"
+                return response.json()["name"]
+            except httpx.HTTPStatusError:
+                return None
 
     async def notify(self, user_id: int, title: str, message: str, n_type: NotificationType, push=True):
         await self.send_in_app_notification(user_id, title, message, n_type)
@@ -127,6 +140,16 @@ class NotificationService:
     # Later to be implemented
     async def send_email_notification(self, user_id: int, subject: str, body: str) -> None:
         ...
+
+    async def get_all_unread_notifications(self, user_id: int) -> list[Notification]:
+        result = await self.session.execute(
+            select(Notification)
+            .where(Notification.user_id == user_id)
+            .where(Notification.is_read == False)
+            .order_by(Notification.created_at.desc())
+        )
+        notifications = result.scalars().all()
+        return list(notifications)
 
     # Trigger functions
     async def notify_flip_result(self, user_id: int, survived: bool, round_number: int) -> None:
