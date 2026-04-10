@@ -16,7 +16,7 @@ class GameEngine:
             # 20:00 CET == 19:00 UTC
             if now.hour == 19 and now.minute == 0:
                 async with self.async_session() as session:
-                    service = GameService(session, self.wallet_service)
+                    service = GameService(session)
 
                     games = await service.get_active_games()
 
@@ -26,7 +26,7 @@ class GameEngine:
                                 await service.execute_flip(game.id)
 
                             elif game.status == "showdown_pending":
-                                await service.try_start_showdown(game.id)
+                                await service.try_start_showdown(game.id, self.wallet_service)
                         except Exception as e:
                             print(f"Error processing game {game.id}: {e}")
 
@@ -42,14 +42,14 @@ class GameEngine:
     async def showdown_scheduler(self):
         while True:
             async with self.async_session() as session:
-                service = GameService(session, self.wallet_service)
+                service = GameService(session)
 
                 # Fetch games that are in showdown_active state (ready for a flip)
                 games = await service.get_showdown_active_games()
 
                 for game in games:
                     try:
-                        await service.execute_showdown_flip(game.id)
+                        await service.execute_showdown_flip(game.id, self.wallet_service)
                     except Exception as e:
                         print(f"Error processing showdown flip for game {game.id}: {e}")
 
