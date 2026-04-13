@@ -1,7 +1,7 @@
 from datetime import timedelta
 from unittest.mock import patch
 from Game.models import GamePlayer
-from Game.services import GameService
+from Game.service import GameService
 import pytest
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")

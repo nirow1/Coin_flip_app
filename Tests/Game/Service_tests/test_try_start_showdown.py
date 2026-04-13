@@ -1,6 +1,6 @@
 from decimal import Decimal
 from Game.models import GamePlayer
-from Game.services import GameService
+from Game.service import GameService
 from Wallet.models import Wallet
 from Wallet.services import WalletService
 import pytest

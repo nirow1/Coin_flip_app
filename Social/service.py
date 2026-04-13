@@ -2,8 +2,11 @@ from sqlalchemy import select, or_, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from Auth.models import User
 from Game.models import GamePlayer
+from Game.service import GameService
+from Notification.service import NotificationService
 from Social.models import Friend
 from Social.enums import FriendStatus
+from Wallet.services import WalletService
 
 
 class FriendService:
@@ -106,8 +109,32 @@ class FriendService:
         )
         return list(result.scalars().all())
 
-    async def search_users(self, query: str) -> list[User]:
-        ...
+    async def search_users(self, query: str, user_id: int) -> list[User]:
+        pattern = f"%{query}%"
+
+        # All user IDs who already have ANY relationship with the requester (either direction)
+        related_ids = (
+            select(Friend.friend_id).where(Friend.user_id == user_id)
+            .union(
+                select(Friend.user_id).where(Friend.friend_id == user_id)
+            )
+        )
+
+        stmt = (
+            select(User)
+            .where(
+                or_(
+                    User.username.ilike(pattern),
+                    User.email.ilike(pattern),
+                ),
+                User.id != user_id,
+                User.id.not_in(related_ids),
+            )
+            .limit(20)
+        )
+
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
 
     async def get_friend_game_status(self, user_id: int, game_id: int) -> str:
         result = await self.session.execute(
@@ -121,6 +148,28 @@ class FriendService:
             return "not_in_game"
         return "eliminated" if is_eliminated else "active"
 
-    # Later to implement
-    async def invite_friend_to_game(self, user_id: int, friend_id: int, game_id: int) -> bool:
-        ...
+    async def invite_friend_to_game(self,
+                                    user_id: int,
+                                    friend_id: int,
+                                    game_service: GameService,
+                                    wallet: WalletService,
+                                    notif: NotificationService) -> bool:
+        # Check if friend is accepted
+        friend_status = await self.session.execute(
+            select(Friend).where(
+                or_(
+                    (Friend.user_id == user_id) & (Friend.friend_id == friend_id),
+                    (Friend.user_id == friend_id) & (Friend.friend_id == user_id),
+                ),
+                Friend.status == FriendStatus.ACCEPTED,
+            )
+        )
+
+        if friend_status.scalar_one_or_none() is None:
+            raise ValueError("Can only invite accepted friends to game")
+
+        result =  await game_service.invite_friend(user_id, friend_id, wallet)
+
+        await notif.notify_friend_successfully_added_to_game(user_id, friend_id)
+
+        return result

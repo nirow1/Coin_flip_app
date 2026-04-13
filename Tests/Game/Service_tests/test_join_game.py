@@ -2,7 +2,7 @@ from datetime import timedelta
 from decimal import Decimal
 from fastapi import HTTPException
 from Wallet.services import WalletService
-from Game.services import GameService
+from Game.service import GameService
 import pytest
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")

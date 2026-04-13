@@ -2,7 +2,7 @@ import pytest
 from decimal import Decimal
 from unittest.mock import patch
 from Game.models import GamePlayer
-from Game.services import GameService
+from Game.service import GameService
 from Wallet.services import WalletService
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")

@@ -16,41 +16,27 @@ class GameService:
     async def join_game(self, user_id: int, side: str, wallet: WalletService) -> GamePlayer:
         self._validate_side(side)
 
-        game = await self.get_open_game(lock=True)
+        game = await self._get_or_raise_open_game()
 
-        if game is None:
-            raise ValueError("No open game available")
-
-        # Check if the player is already in the game
-        existing = await self.session.execute(
-            select(GamePlayer).where(GamePlayer.game_id == game.id,
-                                     GamePlayer.user_id == user_id)
-        )
-        if existing.scalar_one_or_none() is not None:
+        if await self._check_player_in_game(game.id, user_id):
             raise ValueError("Player is already in this game")
 
-        if game.flip_time is not None:
-            now = datetime.now(timezone.utc)
-            lockout_start = game.flip_time - timedelta(minutes=5)
-            if now >= lockout_start:
-                raise ValueError("Joining is disabled 5 minutes before the flip")
+        self._check_lockout(game)
 
         await wallet.debit(user_id, Decimal("1.00"))
+        return await self._add_player_to_game(game, user_id, side)
 
-        joined_player = GamePlayer(game_id=game.id,
-                                   user_id=user_id,
-                                   side=side,
-                                   round_number=1,
-                                   is_eliminated=False,
-                                   eliminated_at=None)
+    async def invite_friend(self, user_id: int, friend_id: int, wallet: WalletService) -> bool:
+        game = await self._get_or_raise_open_game()
 
-        self.session.add(joined_player)
+        if await self._check_player_in_game(game.id, friend_id):
+            raise ValueError("Friend is already in this game")
 
-        game.prize_pool += Decimal("1.00")
-        game.current_player_count += 1
+        self._check_lockout(game)
 
-        await self.session.flush()
-        return joined_player
+        await wallet.debit(user_id, Decimal("1.00"))
+        await self._add_player_to_game(game, friend_id, None)
+        return True
 
     async def choose_side(self, user_id: int, game_id: int, side: str):
         self._validate_side(side)
@@ -270,6 +256,37 @@ class GameService:
         return await self._get_game_player(game_id, user_id)
 
     # ─── Internal Helpers ─────────────────────────────────────────
+    async def _get_or_raise_open_game(self) -> Game:
+        """Fetches the next open game or raises if none available."""
+        game = await self.get_open_game(lock=True)
+        if game is None:
+            raise ValueError("No open game available")
+        return game
+
+    def _check_lockout(self, game: Game) -> None:
+        """Raises if joining is disabled within 5 minutes of the flip."""
+        if game.flip_time is not None:
+            now = datetime.now(timezone.utc)
+            lockout_start = game.flip_time - timedelta(minutes=5)
+            if now >= lockout_start:
+                raise ValueError("Joining is disabled 5 minutes before the flip")
+
+    async def _add_player_to_game(self, game: Game, user_id: int, side: Optional[str]) -> GamePlayer:
+        """Creates a GamePlayer record and updates game stats. Does not handle payment."""
+        player = GamePlayer(
+            game_id=game.id,
+            user_id=user_id,
+            side=side,
+            round_number=1,
+            is_eliminated=False,
+            eliminated_at=None,
+        )
+        self.session.add(player)
+        game.prize_pool += Decimal("1.00")
+        game.current_player_count += 1
+        await self.session.flush()
+        return player
+
     async def _get_game_by_id(self, game_id: int, lock: bool = True) -> Game:
         query = select(Game).where(Game.id == game_id)
         if lock:
@@ -313,6 +330,14 @@ class GameService:
         await self.session.flush()
         return game
 
+    async def _check_player_in_game(self, game_id: int, user_id: int) -> bool:
+        existing = await self.session.execute(
+            select(GamePlayer).where(GamePlayer.game_id == game_id,
+                                     GamePlayer.user_id == user_id)
+        )
+
+        return existing.scalar_one_or_none() is not None
+
     # ─── Static Utilities ─────────────────────────────────────────
     @staticmethod
     def _apply_eliminations(players: list[GamePlayer], winning_side: str) -> list[GamePlayer]:
@@ -345,7 +370,7 @@ class GameService:
 
     @staticmethod
     def _validate_side(choice: str):
-        if choice not in ("heads", "tails"):
+        if choice not in ("heads", "tails") or choice is None:
             raise ValueError("Side must be 'heads' or 'tails'")
 
     @staticmethod

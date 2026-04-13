@@ -212,3 +212,11 @@ class NotificationService:
         message = f"Your wallet has been debited by {amount} credits!"
         await self.notify(user_id, title, message, NotificationType.wallet_withdrawal)
 
+    async def notify_friend_successfully_added_to_game(self, user_id: int, friend_id: int) -> None:
+        title = "Friend added to game"
+        message = f"Your friend with ID {friend_id} has been successfully added to open game!"
+        await self.notify(user_id, title, message, NotificationType.friend_added_to_game)
+
+        title = "Game invitation"
+        message = f"You have been added to a new game by your friend with ID {user_id}!"
+        await self.notify(friend_id, title, message, NotificationType.game_invitation)

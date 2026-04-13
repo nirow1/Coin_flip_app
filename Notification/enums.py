@@ -15,4 +15,6 @@ class NotificationType(str, enum.Enum):
     wallet_deposit = "wallet_deposit"
     wallet_withdrawal = "wallet_withdrawal"
     general = "general"
+    friend_added_to_game = "friend_added_to_game"
+    game_invitation = "game_invitation"
 

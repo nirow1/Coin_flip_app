@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from Auth.dependencies import get_current_user, get_current_admin
 from Wallet.services import WalletService
 from fastapi import APIRouter, Depends, HTTPException, status
-from Game.services import GameService
+from Game.service import GameService
 from Game.schemas import GameResponse, GamePlayerResponse
 from Auth.models import User
 from db import get_session

@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timezone, timedelta
-from Game.services import GameService
+from Game.service import GameService
 from Wallet.services import WalletService
 
 
