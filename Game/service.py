@@ -1,6 +1,8 @@
 import secrets
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from Leader_board.model import Leaderboard
 from Wallet.services import WalletService
 from Game.models import Game, GamePlayer
 from typing import Optional, List
@@ -153,7 +155,7 @@ class GameService:
         game.prize_pool -= total_payout
 
         for player in takers:
-            await self.cashout(player, game, payout, wallet)
+            await self._cashout(player, game, payout, wallet)
 
         # 3. Determine next state
         if len(continuers) == 0:
@@ -161,7 +163,7 @@ class GameService:
         elif len(continuers) == 1:
             winner = continuers[0]
             game.status = "finished"
-            await self.cashout(winner, game, game.prize_pool, wallet)
+            await self._cashout(winner, game, game.prize_pool, wallet)
         else:
             game.status = "showdown_active"
 
@@ -194,25 +196,11 @@ class GameService:
         if len(survivors) == 1:
             winner = survivors[0]
             game = await self._set_game_state(game, "finished")
-            await self.cashout(winner, game, game.prize_pool, wallet)
+            await self._cashout(winner, game, game.prize_pool, wallet)
             return game
 
         game.current_player_count = len(survivors)
         return await self._set_game_state(game, "showdown_active")
-
-    async def cashout(self, player: GamePlayer, game: Game, payout: Decimal, wallet: WalletService) -> Decimal:
-        if player.is_eliminated:
-            raise ValueError("Eliminated players cannot cash out")
-
-        if game.status not in ("showdown_pending", "finished"):
-            raise ValueError("Cannot cash out in this game state")
-
-        player.is_eliminated = True
-        player.eliminated_at = datetime.now(timezone.utc)
-
-        await wallet.credit(player.user_id, payout)
-        await self.session.flush()
-        return payout
 
     async def create_game(self, flip_time: datetime) -> Game:
         new_game = Game(status="open",
@@ -263,13 +251,20 @@ class GameService:
             raise ValueError("No open game available")
         return game
 
-    def _check_lockout(self, game: Game) -> None:
-        """Raises if joining is disabled within 5 minutes of the flip."""
-        if game.flip_time is not None:
-            now = datetime.now(timezone.utc)
-            lockout_start = game.flip_time - timedelta(minutes=5)
-            if now >= lockout_start:
-                raise ValueError("Joining is disabled 5 minutes before the flip")
+    async def _cashout(self, player: GamePlayer, game: Game, payout: Decimal, wallet: WalletService) -> Decimal:
+        if player.is_eliminated:
+            raise ValueError("Eliminated players cannot cash out")
+
+        if game.status not in ("showdown_pending", "finished"):
+            raise ValueError("Cannot cash out in this game state")
+
+        player.is_eliminated = True
+        player.eliminated_at = datetime.now(timezone.utc)
+
+        await wallet.credit(player.user_id, payout)
+        await Leaderboard(self.session).exe
+        await self.session.flush()
+        return payout
 
     async def _add_player_to_game(self, game: Game, user_id: int, side: Optional[str]) -> GamePlayer:
         """Creates a GamePlayer record and updates game stats. Does not handle payment."""
@@ -351,6 +346,15 @@ class GameService:
                 player.side = None
                 survivors.append(player)
         return survivors
+
+    @staticmethod
+    def _check_lockout(game: Game) -> None:
+        """Raises if joining is disabled within 5 minutes of the flip."""
+        if game.flip_time is not None:
+            now = datetime.now(timezone.utc)
+            lockout_start = game.flip_time - timedelta(minutes=5)
+            if now >= lockout_start:
+                raise ValueError("Joining is disabled 5 minutes before the flip")
 
     @staticmethod
     def _determine_next_state(game: Game, survivors: list[GamePlayer]) -> None:
