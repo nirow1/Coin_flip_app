@@ -1,13 +1,15 @@
 import asyncio
 from datetime import datetime, timezone, timedelta
 from Game.service import GameService
+from Leader_board.service import LeaderBoardService
 from Wallet.services import WalletService
 
 
 class GameEngine:
-    def __init__(self, async_session, wallet_service: WalletService):
+    def __init__(self, async_session, wallet_service: WalletService, leaderboard: LeaderBoardService):
         self.async_session = async_session
         self.wallet_service = wallet_service
+        self.leaderboard_service = leaderboard
 
     async def daily_scheduler(self):
         while True:
@@ -26,7 +28,7 @@ class GameEngine:
                                 await service.execute_flip(game.id)
 
                             elif game.status == "showdown_pending":
-                                await service.try_start_showdown(game.id, self.wallet_service)
+                                await service.try_start_showdown(game.id, self.wallet_service, self.leaderboard_service)
                         except Exception as e:
                             print(f"Error processing game {game.id}: {e}")
 
@@ -49,7 +51,7 @@ class GameEngine:
 
                 for game in games:
                     try:
-                        await service.execute_showdown_flip(game.id, self.wallet_service)
+                        await service.execute_showdown_flip(game.id, self.wallet_service, self.leaderboard_service)
                     except Exception as e:
                         print(f"Error processing showdown flip for game {game.id}: {e}")
 

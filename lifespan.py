@@ -1,5 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
+
+from Leader_board.service import LeaderBoardService
 from db import init_db, SessionLocal
 from fastapi import FastAPI
 from Wallet.services import WalletService
@@ -12,7 +14,8 @@ async def lifespan(app: FastAPI):
 
     # Start background schedulers
     wallet_service = WalletService(SessionLocal)
-    engine = GameEngine(SessionLocal, wallet_service)
+    leaderboard_service = LeaderBoardService(SessionLocal)
+    engine = GameEngine(SessionLocal, wallet_service, leaderboard_service)
     daily_task = asyncio.create_task(engine.daily_scheduler())
     showdown_task = asyncio.create_task(engine.showdown_scheduler())
 

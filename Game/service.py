@@ -1,8 +1,7 @@
 import secrets
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from Leader_board.model import Leaderboard
+from Leader_board.service import LeaderBoardService
 from Wallet.services import WalletService
 from Game.models import Game, GamePlayer
 from typing import Optional, List
@@ -136,7 +135,9 @@ class GameService:
         player.cashout_decision = decision
         await self.session.flush()
 
-    async def try_start_showdown(self, game_id: int, wallet: WalletService) -> Optional[Game]:
+    async def try_start_showdown(self, game_id: int,
+                                 wallet: WalletService,
+                                 leaderboard: LeaderBoardService) -> Optional[Game]:
         game = await self._get_game_by_id(game_id)
 
         if game.status != "showdown_pending":
@@ -155,7 +156,7 @@ class GameService:
         game.prize_pool -= total_payout
 
         for player in takers:
-            await self._cashout(player, game, payout, wallet)
+            await self._cashout(player, game, payout, wallet, leaderboard)
 
         # 3. Determine next state
         if len(continuers) == 0:
@@ -163,14 +164,14 @@ class GameService:
         elif len(continuers) == 1:
             winner = continuers[0]
             game.status = "finished"
-            await self._cashout(winner, game, game.prize_pool, wallet)
+            await self._cashout(winner, game, game.prize_pool, wallet, leaderboard)
         else:
             game.status = "showdown_active"
 
         await self.session.flush()
         return game
 
-    async def execute_showdown_flip(self, game_id: int, wallet: WalletService):
+    async def execute_showdown_flip(self, game_id: int, wallet: WalletService, leaderboard: LeaderBoardService):
         game = await self._get_game_by_id(game_id)
 
         if game.status != "showdown_active":
@@ -196,7 +197,7 @@ class GameService:
         if len(survivors) == 1:
             winner = survivors[0]
             game = await self._set_game_state(game, "finished")
-            await self._cashout(winner, game, game.prize_pool, wallet)
+            await self._cashout(winner, game, game.prize_pool, wallet, leaderboard)
             return game
 
         game.current_player_count = len(survivors)
@@ -251,7 +252,10 @@ class GameService:
             raise ValueError("No open game available")
         return game
 
-    async def _cashout(self, player: GamePlayer, game: Game, payout: Decimal, wallet: WalletService) -> Decimal:
+    async def _cashout(self, player: GamePlayer,
+                       game: Game, payout: Decimal,
+                       wallet: WalletService,
+                       leaderboard: LeaderBoardService) -> Decimal:
         if player.is_eliminated:
             raise ValueError("Eliminated players cannot cash out")
 
@@ -262,7 +266,7 @@ class GameService:
         player.eliminated_at = datetime.now(timezone.utc)
 
         await wallet.credit(player.user_id, payout)
-        await Leaderboard(self.session).exe
+        await leaderboard.increment_earnings(player.user_id, payout)
         await self.session.flush()
         return payout
 

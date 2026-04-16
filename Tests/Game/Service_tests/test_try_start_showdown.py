@@ -8,7 +8,7 @@ import pytest
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
-async def test_try_start_showdown_success(session, test_user, test_wallet, create_test_user, make_game):
+async def test_try_start_showdown_success(session, test_user, test_wallet, create_test_user, make_game, mock_leaderboard):
     service = GameService(session)
     wallet = WalletService(session)
     game = await make_game("showdown_pending")
@@ -37,7 +37,7 @@ async def test_try_start_showdown_success(session, test_user, test_wallet, creat
     # Check test_user balance before cashout
     balance_before = (await wallet.get_wallet(test_user.id)).balance
 
-    showdown_game = await service.try_start_showdown(game.id, wallet)
+    showdown_game = await service.try_start_showdown(game.id, wallet, mock_leaderboard)
 
     # Filter only active (non-eliminated) players
     all_players = await service.get_all_players(showdown_game.id)
@@ -52,7 +52,7 @@ async def test_try_start_showdown_success(session, test_user, test_wallet, creat
     assert balance_after == balance_before + Decimal("1.00")
 
 
-async def test_try_start_showdown_all_cashout(session, create_test_user, make_game):
+async def test_try_start_showdown_all_cashout(session, create_test_user, make_game, mock_leaderboard):
     service = GameService(session)
     wallet = WalletService(session)
     game = await make_game("showdown_pending")
@@ -69,7 +69,7 @@ async def test_try_start_showdown_all_cashout(session, create_test_user, make_ga
                                cashout_decision="cashout"))
     await session.flush()
 
-    result = await service.try_start_showdown(game.id, wallet)
+    result = await service.try_start_showdown(game.id, wallet, mock_leaderboard)
 
     all_players = await service.get_all_players(result.id)
 
@@ -78,7 +78,7 @@ async def test_try_start_showdown_all_cashout(session, create_test_user, make_ga
     assert all(p.is_eliminated for p in all_players)
 
 
-async def test_try_start_showdown_one_continuer(session, create_test_user, make_game):
+async def test_try_start_showdown_one_continuer(session, create_test_user, make_game, mock_leaderboard):
     service = GameService(session)
     wallet = WalletService(session)
     game = await make_game("showdown_pending")
@@ -101,7 +101,7 @@ async def test_try_start_showdown_one_continuer(session, create_test_user, make_
                                cashout_decision="cashout"))
     await session.flush()
 
-    result = await service.try_start_showdown(game.id, wallet)
+    result = await service.try_start_showdown(game.id, wallet, mock_leaderboard)
 
     # payout per cashout player = 5.00 / 5 = 1.00
     # total cashout = 4 × 1.00 = 4.00 → remaining prize_pool = 1.00 → winner gets 1.00
@@ -111,7 +111,7 @@ async def test_try_start_showdown_one_continuer(session, create_test_user, make_
     assert winner_wallet.balance == Decimal("1.00")
 
 
-async def test_try_start_showdown_no_cashout(session, create_test_user, make_game):
+async def test_try_start_showdown_no_cashout(session, create_test_user, make_game, mock_leaderboard):
     service = GameService(session)
     wallet = WalletService(session)
     game = await make_game("showdown_pending")
@@ -127,7 +127,7 @@ async def test_try_start_showdown_no_cashout(session, create_test_user, make_gam
                                cashout_decision="continue"))
     await session.flush()
 
-    result = await service.try_start_showdown(game.id, wallet)
+    result = await service.try_start_showdown(game.id, wallet, mock_leaderboard)
 
     all_players = await service.get_all_players(result.id)
     active_players = [p for p in all_players if not p.is_eliminated]
@@ -138,7 +138,7 @@ async def test_try_start_showdown_no_cashout(session, create_test_user, make_gam
     assert result.prize_pool == Decimal("5.00")
 
 
-async def test_try_start_showdown_wrong_status(session, make_game):
+async def test_try_start_showdown_wrong_status(session, make_game, mock_leaderboard):
     service = GameService(session)
     wallet = WalletService(session)
 
@@ -146,4 +146,4 @@ async def test_try_start_showdown_wrong_status(session, make_game):
     game = await make_game("active")
 
     with pytest.raises(ValueError, match="Showdown is not pending"):
-        await service.try_start_showdown(game.id, wallet)
+        await service.try_start_showdown(game.id, wallet, mock_leaderboard)

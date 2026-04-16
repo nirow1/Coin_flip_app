@@ -1,10 +1,12 @@
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
+from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from typing import AsyncGenerator
 from Auth.models import User
 from Core.security import hash_password, create_access_token
 from Game.models import Game
+from Leader_board.service import LeaderBoardService
 from Wallet.models import Wallet
 from config import settings
 import pytest_asyncio
@@ -202,7 +204,15 @@ async def broke_auth_user(session):
     token = create_access_token({"sub": str(user.id)})
     return {"user": user, "token": token}
 
+
 @pytest_asyncio.fixture(loop_scope="session")
+async def mock_leaderboard():
+    mock = MagicMock(spec=LeaderBoardService)
+    mock.increment_earnings = AsyncMock()
+    mock.update_streak = AsyncMock()
+    return mock@pytest_asyncio.fixture(loop_scope="session")
+
+
 async def create_test_admin(session):
     user = User(
         email="admin_router_user@test.com",  # FIX: was "broke_router_user@test.com" — collided with broke_auth_user
