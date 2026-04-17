@@ -25,7 +25,7 @@ class GameEngine:
                     for game in games:
                         try:
                             if game.status in ("open", "active"):
-                                await service.execute_flip(game.id)
+                                await service.execute_flip(game.id, self.leaderboard_service)
 
                             elif game.status == "showdown_pending":
                                 await service.try_start_showdown(game.id, self.wallet_service, self.leaderboard_service)

@@ -7,7 +7,7 @@ import pytest
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
-async def test_execute_flip_finished(session, make_game, create_test_user):
+async def test_execute_flip_finished(session, make_game, create_test_user, mock_leaderboard):
     service = GameService(session)
     game = await make_game("active", timedelta(seconds=1))
 
@@ -21,7 +21,7 @@ async def test_execute_flip_finished(session, make_game, create_test_user):
                            side="tails", round_number=1, is_eliminated=False))
     await session.flush()
 
-    game_after_flip = await service.execute_flip(game.id)
+    game_after_flip = await service.execute_flip(game.id, mock_leaderboard)
 
     # Game should be finished — 2 players, opposite sides, exactly 1 survivor
     assert game_after_flip.status == "finished"
@@ -37,7 +37,7 @@ async def test_execute_flip_finished(session, make_game, create_test_user):
     assert eliminated[0].eliminated_at is not None
 
 
-async def test_execute_flip_mixed_choices(session, make_game, create_test_user):
+async def test_execute_flip_mixed_choices(session, make_game, create_test_user, mock_leaderboard):
     service = GameService(session)
     game = await make_game("active", timedelta(seconds=1))
 
@@ -49,7 +49,7 @@ async def test_execute_flip_mixed_choices(session, make_game, create_test_user):
                                side=side, round_number=1, is_eliminated=False))
     await session.flush()
 
-    game_after_flip = await service.execute_flip(game.id)
+    game_after_flip = await service.execute_flip(game.id, mock_leaderboard)
 
     # 5 survivors out of 10 → 5/10 = 0.5 > 0.05 threshold → status stays active
     assert game_after_flip.status == "active"
@@ -59,7 +59,7 @@ async def test_execute_flip_mixed_choices(session, make_game, create_test_user):
     assert len(eliminated) == 5
 
 
-async def test_execute_flip_showdown_trigger(session, make_game, create_test_user):
+async def test_execute_flip_showdown_trigger(session, make_game, create_test_user, mock_leaderboard):
     service = GameService(session)
     game = await make_game("active", timedelta(seconds=1))
 
@@ -73,12 +73,12 @@ async def test_execute_flip_showdown_trigger(session, make_game, create_test_use
 
     # Force flip to "heads" — eliminates 96 tails players, 4 survive → showdown triggered
     with patch.object(GameService, "_flip_coin", return_value="heads"):
-        game_after_flip = await service.execute_flip(game.id)
+        game_after_flip = await service.execute_flip(game.id, mock_leaderboard)
 
     assert game_after_flip.status == "showdown_pending"
 
 
-async def test_execute_flip_auto_assign(session, make_game, create_test_user):
+async def test_execute_flip_auto_assign(session, make_game, create_test_user, mock_leaderboard):
     service = GameService(session)
     game = await make_game("active", timedelta(seconds=1))
 
@@ -93,7 +93,7 @@ async def test_execute_flip_auto_assign(session, make_game, create_test_user):
     # First 3 calls: auto-assign "heads" to the 3 None players
     # 4th call: actual flip returns "tails" → tails players survive, heads players eliminated
     with patch.object(GameService, "_flip_coin", side_effect=["heads", "heads", "heads", "tails"]):
-        game_after_flip = await service.execute_flip(game.id)
+        game_after_flip = await service.execute_flip(game.id, mock_leaderboard)
 
     players = await service.get_all_players(game.id)
     eliminated = [p for p in players if p.is_eliminated]
@@ -108,7 +108,7 @@ async def test_execute_flip_auto_assign(session, make_game, create_test_user):
     assert all(p.side is None for p in survivors)
 
 
-async def test_execute_flip_all_one_side(session, make_game, create_test_user):
+async def test_execute_flip_all_one_side(session, make_game, create_test_user, mock_leaderboard):
     service = GameService(session)
     game = await make_game("active", timedelta(seconds=1))
 
@@ -119,7 +119,7 @@ async def test_execute_flip_all_one_side(session, make_game, create_test_user):
                                side="tails", round_number=1, is_eliminated=False))
     await session.flush()
 
-    game_after_flip = await service.execute_flip(game.id)
+    game_after_flip = await service.execute_flip(game.id, mock_leaderboard)
 
     assert game_after_flip.status == "showdown_pending"
 

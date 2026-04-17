@@ -84,7 +84,7 @@ class GameService:
                                                     GamePlayer.is_eliminated.is_(False)))
         return list(result.scalars().all())
 
-    async def execute_flip(self, game_id: int) -> Game:
+    async def execute_flip(self, game_id: int, leaderboard: LeaderBoardService) -> Game:
         game = await self._get_game_by_id(game_id)
         players = await self._get_players_for_game(game_id)
 
@@ -112,7 +112,11 @@ class GameService:
 
         # Flip coin, eliminate losers, determine next state
         winning_side = self._flip_coin()
-        survivors = self._apply_eliminations(players, winning_side)
+        survivors, eliminated = self._apply_eliminations(players, winning_side)
+
+        for player in eliminated:
+            await leaderboard.update_streak(player.user_id, player.round_number)
+
         self._determine_next_state(game, survivors)
 
         await self.session.flush()
@@ -192,7 +196,10 @@ class GameService:
                 player.side = None
             return await self._set_game_state(game, "showdown_active")
 
-        survivors = self._apply_eliminations(players, winning_side)
+        survivors, eliminated = self._apply_eliminations(players, winning_side)
+
+        for player in eliminated:
+            await leaderboard.update_streak(player.user_id, player.round_number)
 
         if len(survivors) == 1:
             winner = survivors[0]
@@ -267,6 +274,7 @@ class GameService:
 
         await wallet.credit(player.user_id, payout)
         await leaderboard.increment_earnings(player.user_id, payout)
+        await leaderboard.update_streak(player.user_id, player.round_number)
         await self.session.flush()
         return payout
 
@@ -339,17 +347,19 @@ class GameService:
 
     # ─── Static Utilities ─────────────────────────────────────────
     @staticmethod
-    def _apply_eliminations(players: list[GamePlayer], winning_side: str) -> list[GamePlayer]:
-        """Marks losing players as eliminated. Returns list of survivors with deleted side."""
+    def _apply_eliminations(players: list[GamePlayer], winning_side: str) -> tuple[list[GamePlayer], list[GamePlayer]]:
+        """Marks losing players as eliminated. Returns (survivors, eliminated)."""
         survivors = []
+        eliminated = []
         for player in players:
             if player.side != winning_side:
                 player.is_eliminated = True
                 player.eliminated_at = datetime.now(timezone.utc)
+                eliminated.append(player)
             else:
                 player.side = None
                 survivors.append(player)
-        return survivors
+        return survivors, eliminated
 
     @staticmethod
     def _check_lockout(game: Game) -> None:
