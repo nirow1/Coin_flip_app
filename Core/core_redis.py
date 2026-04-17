@@ -6,3 +6,6 @@ redis_client = Redis(
     db=0,
     decode_responses=True
 )
+
+async def get_redis() -> Redis:
+    return redis_client

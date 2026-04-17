@@ -1,5 +1,6 @@
 from Game.models import GamePlayer
 from Game.service import GameService
+import fakeredis.aioredis as fakeredis
 import pytest
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -7,6 +8,7 @@ pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 async def test_choose_side_success(session, test_user, make_game):
     service = GameService(session)
+    redis = fakeredis.FakeRedis(decode_responses=True)
 
     game = await make_game("open")
 
@@ -22,7 +24,7 @@ async def test_choose_side_success(session, test_user, make_game):
     await session.flush()
 
     # Action: change side to "tails"
-    await service.choose_side(test_user.id, game.id, "tails")
+    await service.choose_side(test_user.id, game.id, "tails", redis)
 
     # Assert: player's side is updated
     fetch = await service.get_game_player(game.id, test_user.id)

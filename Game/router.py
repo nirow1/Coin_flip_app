@@ -1,5 +1,7 @@
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from Auth.dependencies import get_current_user, get_current_admin
+from Core.core_redis import get_redis
 from Wallet.services import WalletService
 from fastapi import APIRouter, Depends, HTTPException, status
 from Game.service import GameService
@@ -23,10 +25,15 @@ async def join_game(side: str, user: User = Depends(get_current_user), session: 
 
 
 @router.post("/choose")
-async def choose_side(side: str, game_id: int, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+async def choose_side(side: str,
+                      game_id: int,
+                      redis_client: Redis = Depends(get_redis),
+                      user: User = Depends(get_current_user),
+                      session: AsyncSession = Depends(get_session),
+                      ):
     game_service = GameService(session)
     try:
-        response = await game_service.choose_side(user.id, game_id, side)
+        response = await game_service.choose_side(user.id, game_id, side, redis_client)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     return {"message": "Side chosen successfully", "heads": response["heads"], "tails": response["tails"]}

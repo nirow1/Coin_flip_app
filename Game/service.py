@@ -1,5 +1,7 @@
 import secrets
 from datetime import datetime, timezone, timedelta
+
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 from Leader_board.service import LeaderBoardService
 from Wallet.services import WalletService
@@ -39,7 +41,7 @@ class GameService:
         await self._add_player_to_game(game, friend_id, None)
         return True
 
-    async def choose_side(self, user_id: int, game_id: int, side: str):
+    async def choose_side(self, user_id: int, game_id: int, side: str, redis_client: Redis) -> dict:
         self._validate_side(side)
 
         game = await self._get_game_by_id(game_id, lock=False)
@@ -55,26 +57,8 @@ class GameService:
         player.side = side
         await self.session.flush()
 
-        return await self.get_percentages(game_id)
-
-    async def get_percentages(self, game_id: int) -> dict:
-        result = await self.session.execute(
-            select(GamePlayer.side)
-            .where(GamePlayer.game_id == game_id,
-                   GamePlayer.is_eliminated.is_(False))
-        )
-        choices = [row[0] for row in result.fetchall() if row[0] is not None]
-
-        total_choices = len(choices)
-
-        if total_choices == 0:
-            return {"heads": 0, "tails": 0}
-
-        return {
-            "heads": round(choices.count("heads") / total_choices * 100, 2),
-            "tails": round(choices.count("tails") / total_choices * 100, 2)
-        }
-
+        await self._record_choice(game_id, player.round_number, side, redis_client)
+        return await self.get_percentages(game_id, player.round_number, redis_client)
 
     async def get_players_active_games(self, user_id: int) -> List[Game]:
         result = await self.session.execute(select(Game)
@@ -397,3 +381,26 @@ class GameService:
             game.initial_player_count = count
             game.prize_pool *= Decimal("0.98")
             game.prize_pool = game.prize_pool.quantize(Decimal("0.01"))
+
+    @staticmethod
+    async def get_percentages(game_id: int, round_id: int, redis_client: Redis) -> dict:
+        heads_key = f"game:{game_id}:round:{round_id}:heads"
+        tails_key = f"game:{game_id}:round:{round_id}:tails"
+
+        heads, tails = await redis_client.mget(heads_key, tails_key)
+        heads = int(heads or 0)
+        tails = int(tails or 0)
+
+        total_choices = heads + tails
+        if total_choices == 0:
+            return {"heads": 0, "tails": 0}
+
+        return {
+            "heads": round((heads / total_choices) * 100, 2),
+            "tails": round((tails / total_choices) * 100, 2),
+        }
+
+    @staticmethod
+    async def _record_choice(game_id: int, round_id: int, choice: str, redis_client: Redis):
+        key = f"game:{game_id}:round:{round_id}:{choice}"
+        await redis_client.incr(key)
