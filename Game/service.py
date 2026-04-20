@@ -54,8 +54,13 @@ class GameService:
         if player.is_eliminated:
             raise ValueError("Eliminated players cannot choose a side")
 
+        previous_side = player.side
         player.side = side
         await self.session.flush()
+
+        # If player is changing their side, undo the previous count in Redis
+        if previous_side in ("heads", "tails") and previous_side != side:
+            await self._decrement_choice(game_id, player.round_number, previous_side, redis_client)
 
         await self._record_choice(game_id, player.round_number, side, redis_client)
         return await self.get_percentages(game_id, player.round_number, redis_client)
@@ -125,7 +130,8 @@ class GameService:
 
     async def try_start_showdown(self, game_id: int,
                                  wallet: WalletService,
-                                 leaderboard: LeaderBoardService) -> Optional[Game]:
+                                 leaderboard: LeaderBoardService,
+                                 redis_client: Redis) -> Optional[Game]:
         game = await self._get_game_by_id(game_id)
 
         if game.status != "showdown_pending":
@@ -155,11 +161,15 @@ class GameService:
             await self._cashout(winner, game, game.prize_pool, wallet, leaderboard)
         else:
             game.status = "showdown_active"
+            await redis_client.set(f"showdown:{game_id}:{continuers[0].round_number}", "1", ex=60)
 
         await self.session.flush()
         return game
 
-    async def execute_showdown_flip(self, game_id: int, wallet: WalletService, leaderboard: LeaderBoardService):
+    async def execute_showdown_flip(self, game_id: int,
+                                    wallet: WalletService,
+                                    leaderboard: LeaderBoardService,
+                                    redis_client: Redis):
         game = await self._get_game_by_id(game_id)
 
         if game.status != "showdown_active":
@@ -178,6 +188,7 @@ class GameService:
         if all(p.side != winning_side for p in players):
             for player in players:
                 player.side = None
+            await redis_client.set(f"showdown:{game_id}:{players[0].round_number}", "1", ex=60)
             return await self._set_game_state(game, "showdown_active")
 
         survivors, eliminated = self._apply_eliminations(players, winning_side)
@@ -192,6 +203,7 @@ class GameService:
             return game
 
         game.current_player_count = len(survivors)
+        await redis_client.set(f"showdown:{game_id}:{players[0].round_number}", "1", ex=60)
         return await self._set_game_state(game, "showdown_active")
 
     async def create_game(self, flip_time: datetime) -> Game:
@@ -404,3 +416,11 @@ class GameService:
     async def _record_choice(game_id: int, round_id: int, choice: str, redis_client: Redis):
         key = f"game:{game_id}:round:{round_id}:{choice}"
         await redis_client.incr(key)
+        await redis_client.expire(key, 86400)  # TTL: 24 hours
+
+    @staticmethod
+    async def _decrement_choice(game_id: int, round_id: int, choice: str, redis_client: Redis):
+        key = f"game:{game_id}:round:{round_id}:{choice}"
+        current = await redis_client.get(key)
+        if current is not None and int(current) > 0:
+            await redis_client.decr(key)
