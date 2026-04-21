@@ -1,12 +1,16 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
 from sqlalchemy import select, or_, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from Auth.models import User
 from Game.models import GamePlayer
-from Game.service import GameService
 from Notification.service import NotificationService
 from Social.models import Friend
 from Social.enums import FriendStatus
 from Wallet.services import WalletService
+
+if TYPE_CHECKING:
+    from Game.service import GameService
 
 
 class FriendService:
