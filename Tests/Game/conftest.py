@@ -210,9 +210,10 @@ async def mock_leaderboard():
     mock = MagicMock(spec=LeaderBoardService)
     mock.increment_earnings = AsyncMock()
     mock.update_streak = AsyncMock()
-    return mock@pytest_asyncio.fixture(loop_scope="session")
+    return mock
 
 
+@pytest_asyncio.fixture(loop_scope="session")
 async def create_test_admin(session):
     user = User(
         email="admin_router_user@test.com",  # FIX: was "broke_router_user@test.com" — collided with broke_auth_user
