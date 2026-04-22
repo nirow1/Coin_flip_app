@@ -29,7 +29,7 @@ class GameEngine:
                     for game in games:
                         try:
                             if game.status in ("open", "active"):
-                                await service.execute_flip(game.id, self.leaderboard_service)
+                                await service.execute_flip(game.id, self.wallet_service, self.leaderboard_service)
 
                             elif game.status == "showdown_pending":
                                 await service.try_start_showdown(game.id, self.wallet_service, self.leaderboard_service, self.redis_client)
@@ -47,7 +47,6 @@ class GameEngine:
 
     async def showdown_scheduler(self):
         await self.pubsub.psubscribe("__keyevent@0__:expired")
-
 
         async for message in self.pubsub.listen():
             if message["type"] != "pmessage":

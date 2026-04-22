@@ -73,7 +73,7 @@ class GameService:
                                                     GamePlayer.is_eliminated.is_(False)))
         return list(result.scalars().all())
 
-    async def execute_flip(self, game_id: int, leaderboard: LeaderBoardService) -> Game:
+    async def execute_flip(self, game_id: int,wallet: WalletService, leaderboard: LeaderBoardService) -> Game:
         game = await self._get_game_by_id(game_id)
         players = await self._get_players_for_game(game_id)
 
@@ -107,6 +107,10 @@ class GameService:
             await leaderboard.update_streak(player.user_id, player.round_number)
 
         self._determine_next_state(game, survivors)
+
+        if len(survivors) == 1:
+            winner = survivors[0]
+            await self._cashout(winner, game, game.prize_pool, wallet, leaderboard)
 
         await self.session.flush()
         return game

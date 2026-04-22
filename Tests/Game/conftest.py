@@ -8,6 +8,7 @@ from Core.security import hash_password, create_access_token
 from Game.models import Game
 from Leader_board.service import LeaderBoardService
 from Wallet.models import Wallet
+from Wallet.services import WalletService
 from config import settings
 import pytest_asyncio
 from db import Base, get_session
@@ -203,6 +204,14 @@ async def broke_auth_user(session):
 
     token = create_access_token({"sub": str(user.id)})
     return {"user": user, "token": token}
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def mock_wallet():
+    mock = MagicMock(spec=WalletService)
+    mock.credit = AsyncMock()
+    mock.debit = AsyncMock()
+    return mock
 
 
 @pytest_asyncio.fixture(loop_scope="session")

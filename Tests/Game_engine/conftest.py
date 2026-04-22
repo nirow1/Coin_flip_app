@@ -28,3 +28,10 @@ def make_mock_sleep(stop_at=2):
         if counter >= stop_at:
             raise asyncio.CancelledError
     return mock_sleep
+
+
+def create_game(id: int, status: str):
+    game = MagicMock()
+    game.id = id
+    game.status = status
+    return game
