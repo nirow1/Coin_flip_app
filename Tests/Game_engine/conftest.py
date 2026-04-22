@@ -3,6 +3,11 @@ from unittest.mock import AsyncMock, MagicMock
 from Game.engine import GameEngine
 
 
+async def async_iter(items):
+    for item in items:
+        yield item
+
+
 def make_engine_with_mocks():
     mock_session = AsyncMock()
     mock_session.__aenter__.return_value = mock_session

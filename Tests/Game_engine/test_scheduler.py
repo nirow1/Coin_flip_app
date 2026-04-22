@@ -137,13 +137,13 @@ async def test_scheduler_game_error_continues_processing():
     game_2 = create_game(2, "active")
 
     mock_service.get_active_games.return_value = [game_1, game_2]
-    mock_service.execute_flip.side_effect = [Exception("DB error"), None]  # game_1 spadne
+    mock_service.execute_flip.side_effect = [Exception("DB error"), None]  # game_1 fails
 
     with patch("Game.engine.GameService", return_value=mock_service), \
          patch("asyncio.sleep", side_effect=make_mock_sleep()):
         with pytest.raises(asyncio.CancelledError):
             await engine.daily_scheduler()
 
-    # Game_2 musí být stále zpracována i přes chybu game_1
+    # game_2 must still be processed despite game_1 error
     assert mock_service.execute_flip.await_count == 2
-    mock_session.commit.assert_awaited_once()  # commit proběhne i přes chybu
+    mock_session.commit.assert_awaited_once()  # commit runs even after error

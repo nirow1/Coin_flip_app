@@ -165,7 +165,7 @@ class GameService:
             await self._cashout(winner, game, game.prize_pool, wallet, leaderboard)
         else:
             game.status = "showdown_active"
-            await redis_client.set(f"showdown:{game_id}:{continuers[0].round_number}", "1", ex=60)
+            await redis_client.set(f"showdown_flip:{game_id}:{continuers[0].round_number}", "1", ex=60)
 
         await self.session.flush()
         return game
@@ -192,7 +192,7 @@ class GameService:
         if all(p.side != winning_side for p in players):
             for player in players:
                 player.side = None
-            await redis_client.set(f"showdown:{game_id}:{players[0].round_number}", "1", ex=60)
+            await redis_client.set(f"showdown_flip:{game_id}:{players[0].round_number}", "1", ex=60)
             return await self._set_game_state(game, "showdown_active")
 
         survivors, eliminated = self._apply_eliminations(players, winning_side)
@@ -207,7 +207,7 @@ class GameService:
             return game
 
         game.current_player_count = len(survivors)
-        await redis_client.set(f"showdown:{game_id}:{players[0].round_number}", "1", ex=60)
+        await redis_client.set(f"showdown_flip:{game_id}:{players[0].round_number}", "1", ex=60)
         return await self._set_game_state(game, "showdown_active")
 
     async def create_game(self, flip_time: datetime) -> Game:
