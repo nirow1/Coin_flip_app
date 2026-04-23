@@ -20,5 +20,5 @@ class User(Base):
     wallet = relationship("Wallet", back_populates="user", uselist=False)
     solana_wallet = relationship("UserSolanaWallet", back_populates="user", uselist=False)
     notifications = relationship("Notification", back_populates="user", uselist=True)
-    friends = relationship("Friend", back_populates="user", uselist=True)
+    friends = relationship("Friend", back_populates="user", uselist=True, foreign_keys="Friend.user_id")
     leaderboard = relationship("Leaderboard", back_populates="user", uselist=False)

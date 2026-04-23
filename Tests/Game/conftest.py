@@ -6,9 +6,11 @@ from typing import AsyncGenerator
 from Auth.models import User
 from Core.security import hash_password, create_access_token
 from Game.models import Game
+from Game.service import GameService
 from Leader_board.service import LeaderBoardService
 from Wallet.models import Wallet
 from Wallet.services import WalletService
+import fakeredis.aioredis as fakeredis
 from config import settings
 import pytest_asyncio
 from db import Base, get_session
@@ -212,6 +214,16 @@ async def mock_wallet():
     mock.credit = AsyncMock()
     mock.debit = AsyncMock()
     return mock
+
+
+@pytest_asyncio.fixture
+async def game_context(session):
+    """Returns a tuple of (service, wallet, redis) for use in game service tests."""
+    service = GameService(session)
+    wallet = WalletService(session)
+    redis = fakeredis.FakeRedis(decode_responses=True)
+    return service, wallet, redis
+
 
 
 @pytest_asyncio.fixture(loop_scope="session")

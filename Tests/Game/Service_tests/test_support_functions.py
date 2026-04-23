@@ -1,0 +1,19 @@
+async def test_get_players_active_games(session, test_user, make_game):
+    service = GameService(session)
+
+    games = [await make_game("active"), await make_game("active")]
+
+    for game in games:
+        session.add(GamePlayer(
+            game_id=game.id,
+            user_id=test_user.id,
+            side="heads",
+            round_number=1,
+            is_eliminated=False,
+        ))
+    await session.flush()
+
+    joined_games = await service.get_players_active_games(test_user.id)
+
+    game_ids = {g.id for g in joined_games}
+    assert game_ids == {games[0].id, games[1].id}
