@@ -2,10 +2,10 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from Wallet.router import router as wallet_router
 from Auth.router import router as auth_router
 from httpx import AsyncClient, ASGITransport
-from Core.security import hash_password
+from Core.security import hash_password, create_access_token
 from typing import AsyncGenerator
 from db import Base, get_session
-from Wallet.models import Wallet
+from Wallet.models import Wallet, UserSolanaWallet
 from sqlalchemy import select
 from Auth.models import User
 from fastapi import FastAPI
@@ -13,9 +13,17 @@ from config import settings
 from decimal import Decimal
 from datetime import date
 import pytest_asyncio
+
+# --- Import all models so SQLAlchemy can resolve every relationship on User ---
+import Notification.models      # noqa: F401  (Notification, relationship on User)
+import Social.models            # noqa: F401  (Friend, relationship on User)
+import Leader_board.model       # noqa: F401  (Leaderboard, relationship on User)
+import Game.models              # noqa: F401  (any Game models referencing Base)
 import pytest
 
 TEST_DATABASE_URL = settings.TEST_DATABASE_URL
+
+FAKE_SOLANA_ADDRESS = "So11111111111111111111111111111111111111112"
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
@@ -160,4 +168,87 @@ async def committed_user_and_wallet(engine):
         await conn.commit()
 
     return [user.id, wallet.id]
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def solana_engine():
+    _engine = create_async_engine(TEST_DATABASE_URL)
+    async with _engine.connect() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await conn.commit()
+    yield _engine
+    async with _engine.connect() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.commit()
+    await _engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def solana_app():
+    app = FastAPI()
+    app.include_router(auth_router, prefix="/auth")
+    app.include_router(wallet_router)
+    return app
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def solana_client(solana_engine, solana_app):
+    """
+    Provides an AsyncClient with:
+      - a committed User, Wallet, and UserSolanaWallet in the DB
+      - get_session overridden to use a rolled-back test connection
+      - a pre-built JWT token for the user
+    Returns a dict: {"client": AsyncClient, "token": str, "public_key": str, "user_id": int}
+    """
+    # --- Commit real data so it's visible across connections ---
+    async with solana_engine.connect() as setup_conn:
+        await setup_conn.begin()
+        sf = async_sessionmaker(bind=setup_conn, expire_on_commit=False)
+        async with sf() as s:
+            user = User(
+                email="solana_deposit@example.com",
+                password_hash=hash_password("Secret123!"),
+                country="CZ",
+                dob=date(2000, 1, 1),
+            )
+            s.add(user)
+            await s.flush()
+
+            wallet = Wallet(user_id=user.id, balance=Decimal("0.00"))
+            s.add(wallet)
+            await s.flush()
+
+            solana_wallet = UserSolanaWallet(
+                user_id=user.id,
+                public_key=FAKE_SOLANA_ADDRESS,
+                private_key_encrypted=b"dummy",
+            )
+            s.add(solana_wallet)
+            await s.commit()
+            await s.refresh(user)
+            await s.refresh(wallet)
+
+        await setup_conn.commit()
+
+    token = create_access_token({"sub": str(user.id)})
+
+    # --- Per-test rolled-back connection for the client ---
+    async with solana_engine.connect() as conn:
+        await conn.begin()
+        test_sf = async_sessionmaker(bind=conn, expire_on_commit=False,
+                                     join_transaction_mode="create_savepoint")
+
+        async def override_get_session():
+            async with test_sf() as s:
+                yield s
+
+        solana_app.dependency_overrides[get_session] = override_get_session
+
+        transport = ASGITransport(app=solana_app)
+        try:
+            async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                yield {"client": ac, "token": token,
+                       "public_key": FAKE_SOLANA_ADDRESS, "user_id": user.id}
+        finally:
+            solana_app.dependency_overrides.pop(get_session, None)
+            await conn.rollback()
 

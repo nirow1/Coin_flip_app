@@ -4,7 +4,8 @@ from decimal import Decimal
 from typing import cast
 from Wallet.models import Wallet, Transaction
 from Wallet.enums import TransactionType
-from Core.core_solana import solana_send_transaction
+from Core.core_solana import solana_send_transaction, verify_solana_transaction
+from config import settings
 from fastapi import HTTPException, status
 
 
@@ -68,29 +69,54 @@ class WalletService:
         return transaction
 
     async def deposit_sol(self, user_id: int, amount_sol: Decimal, tx_hash: str):
-        credits = amount_sol  # 1 SOL = 1 credit (or your chosen rate)
+        # 1. Verify on-chain transaction BEFORE crediting balance
+        try:
+            await verify_solana_transaction(
+                tx_hash=tx_hash,
+                expected_destination=settings.SOLANA_HOT_WALLET_ADDRESS,
+                expected_amount_sol=amount_sol,
+                rpc_url=settings.SOLANA_RPC_URL
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"On-chain deposit verification failed: {e}"
+            )
 
+        # 2. Only credit if verification passed
         return await self.credit(
             user_id=user_id,
-            amount=credits,
+            amount=amount_sol,
             transaction_type=TransactionType.DEPOSIT_SOLANA
         )
 
     async def withdraw_sol(self, user_id: int, amount_sol: Decimal, destination_address: str):
-        # 1. Debit internal balance
-        await self.debit(
+        # 1. Debit internal balance first
+        transaction = await self.debit(
             user_id=user_id,
             amount=amount_sol,
             transaction_type=TransactionType.WITHDRAW_SOLANA
         )
 
-        # 2. Send SOL on-chain
-        tx_sig = await solana_send_transaction(
-            destination_address,
-            amount_sol
-        )
+        # 2. Send SOL on-chain; if it fails, refund the internal balance
+        try:
+            tx_sig = await solana_send_transaction(
+                destination_address,
+                amount_sol,
+                settings.SOLANA_RPC_URL
+            )
+        except Exception as e:
+            await self.credit(
+                user_id=user_id,
+                amount=amount_sol,
+                transaction_type=TransactionType.CREDIT
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"On-chain transaction failed, withdrawal reversed: {e}"
+            )
 
-        return tx_sig
+        return {"transaction": transaction, "tx_signature": tx_sig}
 
     async def credit(self, user_id: int, amount: Decimal, transaction_type: TransactionType = TransactionType.CREDIT) -> Transaction:
         wallet = await self.get_wallet_for_update(user_id)
