@@ -54,13 +54,12 @@ class GameService:
         if player.is_eliminated:
             raise ValueError("Eliminated players cannot choose a side")
 
+        if player.side is not None:
+            raise ValueError("Player has already chosen side")
+
         previous_side = player.side
         player.side = side
         await self.session.flush()
-
-        # If player is changing their side, undo the previous count in Redis
-        if previous_side in ("heads", "tails") and previous_side != side:
-            await self._decrement_choice(game_id, player.round_number, previous_side, redis_client)
 
         await self._record_choice(game_id, player.round_number, side, redis_client)
         return await self.get_percentages(game_id, player.round_number, redis_client)
