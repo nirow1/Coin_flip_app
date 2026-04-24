@@ -1,7 +1,10 @@
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from decimal import Decimal
 from typing import cast
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from Wallet.models import Wallet, Transaction
 from Wallet.enums import TransactionType
 from Core.core_solana import solana_send_transaction, verify_solana_transaction
@@ -53,14 +56,14 @@ class WalletService:
         transactions = cast(list[Transaction], results.scalars().all())
         return transactions
 
-    async def _apply_transaction(self, wallet: Wallet, amount: Decimal, transaction_type: TransactionType) -> Transaction:
+    async def _apply_transaction(self, wallet: Wallet, amount: Decimal, transaction_type: TransactionType, tx_hash: str | None = None) -> Transaction:
         new_balance = wallet.balance + amount
 
         if new_balance < Decimal("0.00"):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient funds")
 
         wallet.balance = new_balance
-        transaction = Transaction(wallet_id=wallet.id, amount=amount, type=transaction_type)
+        transaction = Transaction(wallet_id=wallet.id, amount=amount, type=transaction_type, tx_hash=tx_hash)
 
         self.session.add(transaction)
         await self.session.commit()
@@ -84,11 +87,18 @@ class WalletService:
             )
 
         # 2. Only credit if verification passed
-        return await self.credit(
-            user_id=user_id,
-            amount=amount_sol,
-            transaction_type=TransactionType.DEPOSIT_SOLANA
-        )
+        try:
+            return await self.credit(
+                user_id=user_id,
+                amount=amount_sol,
+                transaction_type=TransactionType.DEPOSIT_SOLANA,
+                tx_hash=tx_hash
+            )
+        except IntegrityError:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Transaction {tx_hash} has already been processed"
+            )
 
     async def withdraw_sol(self, user_id: int, amount_sol: Decimal, destination_address: str):
         # 1. Debit internal balance first
@@ -118,9 +128,9 @@ class WalletService:
 
         return {"transaction": transaction, "tx_signature": tx_sig}
 
-    async def credit(self, user_id: int, amount: Decimal, transaction_type: TransactionType = TransactionType.CREDIT) -> Transaction:
+    async def credit(self, user_id: int, amount: Decimal, transaction_type: TransactionType = TransactionType.CREDIT, tx_hash: str | None = None) -> Transaction:
         wallet = await self.get_wallet_for_update(user_id)
-        return await self._apply_transaction(wallet, amount, transaction_type)
+        return await self._apply_transaction(wallet, amount, transaction_type, tx_hash=tx_hash)
 
     async def debit(self, user_id: int, amount: Decimal, transaction_type: TransactionType = TransactionType.DEBIT) -> Transaction:
         wallet = await self.get_wallet_for_update(user_id)
