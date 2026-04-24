@@ -3,9 +3,7 @@ from decimal import Decimal
 import hashlib
 import json
 import hmac
-
 import pytest
-
 from config import settings
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
