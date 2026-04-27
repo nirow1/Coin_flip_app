@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock, patch
+
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from Wallet.router import router as wallet_router
 from Auth.router import router as auth_router
@@ -188,6 +190,13 @@ def solana_app():
     app.include_router(auth_router, prefix="/auth")
     app.include_router(wallet_router)
     return app
+
+
+@pytest.fixture(autouse=True)
+def mock_signature():
+    """Prevent base58 decode errors — all tests use fake tx_hash strings."""
+    with patch("Core.core_solana.Signature.from_string", return_value=MagicMock()):
+        yield
 
 
 @pytest_asyncio.fixture(loop_scope="session")
