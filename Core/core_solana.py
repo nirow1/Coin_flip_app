@@ -48,9 +48,17 @@ async def solana_send_transaction(destination_address: str, amount_sol: Decimal,
         opts=TxOpts(skip_preflight=False)
     )
 
+    if send_resp.value is None:
+        raise Exception("send_raw_transaction failed: no signature returned")
+
     signature = send_resp.value
 
-    await client.confirm_transaction(signature)
+    try:
+        await client.confirm_transaction(signature)
+    except Exception as e:
+        # SOL was already sent — raise a distinct error so withdraw_sol
+        # knows NOT to refund (money is in-flight, not lost)
+        raise Exception(f"SENT_UNCONFIRMED:{signature}:{e}")
 
     # Return signature as base58 string to match -> str return type
     return str(signature)
@@ -96,5 +104,4 @@ async def verify_solana_transaction(tx_hash: str, expected_destination: str, exp
             return True
 
     raise ValueError(f"Destination address {expected_destination} not found in transaction {tx_hash}")
-
 

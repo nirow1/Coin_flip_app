@@ -62,13 +62,61 @@ async def test_solana_send_transaction_rpc_unreachable(mock_keypair):
     mock_client.confirm_transaction.assert_not_called()
  
  
-async def test_solana_send_transaction_send_fails():
-    ...
+async def test_solana_send_transaction_send_fails(mock_keypair):
+    """send_raw_transaction returns value=None → Exception raised, confirm never called."""
+    mock_client = AsyncMock()
+    mock_client.get_latest_blockhash.return_value.value.blockhash = MagicMock()
+    mock_client.send_raw_transaction.return_value.value = None
+
+    with patch("Core.core_solana.AsyncClient", return_value=mock_client), \
+            patch("Core.core_solana.Transaction.new_signed_with_payer", return_value=MagicMock()), \
+            patch("Core.core_solana.Pubkey.from_string", return_value=MagicMock()), \
+            patch("Core.core_solana.TransferParams", return_value=MagicMock()), \
+            patch("Core.core_solana.transfer", return_value=MagicMock()):
+        with pytest.raises(Exception, match="send_raw_transaction failed: no signature returned"):
+            await solana_send_transaction(
+                destination_address=DESTINATION,
+                amount_sol=AMOUNT_SOL,
+                rpc_url="https://api.mainnet-beta.solana.com",
+            )
+
+    mock_client.confirm_transaction.assert_not_called()
 
 
-async def test_solana_send_transaction_confirm_fails():
-    ...
+async def test_solana_send_transaction_confirm_fails(mock_keypair):
+    mock_client = AsyncMock()
+    mock_client.get_latest_blockhash.return_value.value.blockhash = MagicMock()
+    mock_client.send_raw_transaction.return_value.value = FAKE_SIGNATURE
+    mock_client.confirm_transaction.side_effect = Exception("Transaction failed to confirm")
+
+    with patch("Core.core_solana.AsyncClient", return_value=mock_client), \
+            patch("Core.core_solana.Transaction.new_signed_with_payer", return_value=MagicMock()), \
+            patch("Core.core_solana.Pubkey.from_string", return_value=MagicMock()), \
+            patch("Core.core_solana.TransferParams", return_value=MagicMock()), \
+            patch("Core.core_solana.transfer", return_value=MagicMock()):
+        with pytest.raises(Exception, match="SENT_UNCONFIRMED"):
+            await solana_send_transaction(
+                destination_address=DESTINATION,
+                amount_sol=AMOUNT_SOL,
+                rpc_url="https://api.mainnet-beta.solana.com",
+            )
+
+    mock_client.send_raw_transaction.assert_called_once()
 
 
 async def test_solana_send_transaction_keypair_file_not_found():
-    ...
+    """Keypair file missing → FileNotFoundError propagates before any RPC call."""
+    mock_client = AsyncMock()
+
+    with patch("builtins.open", side_effect=FileNotFoundError("No such file or directory")), \
+         patch("Core.core_solana.AsyncClient", return_value=mock_client):
+        with pytest.raises(FileNotFoundError):
+            await solana_send_transaction(
+                destination_address=DESTINATION,
+                amount_sol=AMOUNT_SOL,
+                rpc_url="https://api.mainnet-beta.solana.com",
+            )
+
+    mock_client.get_latest_blockhash.assert_not_called()
+    mock_client.send_raw_transaction.assert_not_called()
+    mock_client.confirm_transaction.assert_not_called()

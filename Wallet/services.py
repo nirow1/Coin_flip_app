@@ -116,6 +116,14 @@ class WalletService:
                 settings.SOLANA_RPC_URL
             )
         except Exception as e:
+            error_msg = str(e)
+            if error_msg.startswith("SENT_UNCONFIRMED:"):
+                # SOL is in-flight — do NOT refund, flag for manual review
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"SOL sent but confirmation failed: {error_msg}. Manual review required."
+                )
+            # SOL was never sent — safe to refund
             await self.credit(
                 user_id=user_id,
                 amount=amount_sol,
