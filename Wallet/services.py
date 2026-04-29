@@ -2,14 +2,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from decimal import Decimal
 from typing import cast
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from Wallet.models import Wallet, Transaction
+from Wallet.models import Wallet, Transaction, UserSolanaWallet
 from Wallet.enums import TransactionType
 from Core.core_solana import solana_send_transaction, verify_solana_transaction
 from config import settings
 from fastapi import HTTPException, status
+import hmac
+import hashlib
 
 
 class WalletService:
@@ -70,6 +71,31 @@ class WalletService:
         await self.session.refresh(transaction)
         await self.session.refresh(wallet)
         return transaction
+
+    async def process_solana_webhook(self, raw_body: bytes, signature: str, payload_destination: str, amount_sol: Decimal, tx_hash: str):
+        # 1. Verify HMAC signature
+        expected = hmac.new(
+            settings.SOLANA_WEBHOOK_SECRET.encode(),
+            raw_body,
+            hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook signature")
+
+        # 2. Look up user by destination Solana address
+        result = await self.session.execute(
+            select(UserSolanaWallet).where(UserSolanaWallet.public_key == payload_destination)
+        )
+        solana_wallet = result.scalar_one_or_none()
+        if solana_wallet is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solana address not linked to any user")
+
+        # 3. Credit user
+        await self.deposit_sol(
+            user_id=solana_wallet.user_id,
+            amount_sol=amount_sol,
+            tx_hash=tx_hash
+        )
 
     async def deposit_sol(self, user_id: int, amount_sol: Decimal, tx_hash: str):
         # 1. Verify on-chain transaction BEFORE crediting balance
