@@ -7,7 +7,7 @@ interface WalletViewProps {
 
 export default function WalletView({ onNavigate }: WalletViewProps) {
   return (
-    <div className="p-8 text-gray-900 max-w-5xl">
+    <div className="p-8 text-gray-900 max-w-7xl">
       <h2 className="text-3xl text-[#efbf04] mb-4 font-[Alexandria]">Wallet</h2>
       <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-6 border-b border-gray-50">

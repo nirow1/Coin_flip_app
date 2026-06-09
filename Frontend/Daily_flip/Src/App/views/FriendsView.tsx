@@ -7,7 +7,7 @@ export default function FriendsPage() {
   );
 
   return (
-    <div className="p-6 max-w-5xl text-gray-900">
+    <div className="p-6 max-w-7xl text-gray-900">
       <h2 className="text-3xl text-[#efbf04] mb-5 font-[Alexandria]">Friends</h2>
 
       {/* Search bar */}

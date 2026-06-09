@@ -1,4 +1,5 @@
 import asyncio
+from fastapi.middleware.cors import CORSMiddleware
 from Wallet.router import router as wallet_router
 from Auth.router import router as auth_router
 from Game.router import router as game_router
@@ -10,6 +11,13 @@ app = FastAPI(title="Daily Flip API", lifespan=lifespan)
 app.include_router(auth_router, prefix="/auth")
 app.include_router(wallet_router)
 app.include_router(game_router, prefix="/game")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")

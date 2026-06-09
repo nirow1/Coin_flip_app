@@ -2,7 +2,7 @@ export default function MyGames() {
   return (
     <div className="p-6 text-gray-900">
       <h2 className="text-3xl text-[#efbf04] mb-5 font-[Alexandria]">My Games</h2>
-      <div className="flex flex-col gap-3 max-w-5xl">
+      <div className="flex flex-col gap-3 max-w-7xl">
         {myGamesData.map((game) => (
           <div
             key={game.id}
