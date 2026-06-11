@@ -1,0 +1,76 @@
+# ─── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ─── Node / Frontend ──────────────────────────────────────
+node_modules/
+Frontend/Daily_flip/dist/
+Frontend/Daily_flip/.vite/
+*.local
+
+# ─── IDE / Editor ─────────────────────────────────────────
+.idea/
+.vscode/
+*.suo
+*.user
+*.swp
+*.swo
+
+# ─── OS ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ─── Logs ─────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── Media / misc files ───────────────────────────────────
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.mp4
+*.mp3
+*.wav
+*.zip
+*.tar.gz
+*.rar
+*.txt
+*.pdf
+*.csv
+
+# ─── Database ─────────────────────────────────────────────
+*.sqlite
+*.sqlite3
+*.db
