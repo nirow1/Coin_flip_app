@@ -12,7 +12,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | null>(null);
+export const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
@@ -23,11 +23,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     try {
       const res = await apiLogin(email, password);
+      
       const { access_token } = res.data;
+      
       localStorage.setItem('token', access_token);
       setToken(access_token);
+      
       const payload = JSON.parse(atob(access_token.split('.')[1]));
+      
       setUser({ email: payload.sub });
+    } catch (err: any) {
+      console.error("Login failed:", err);
     } finally {
       setIsLoading(false);
     }

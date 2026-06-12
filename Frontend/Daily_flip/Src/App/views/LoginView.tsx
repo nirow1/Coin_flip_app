@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
+import { AuthContext } from "../../Context/AuthContext";
 
 export default function Login() {
+  const auth = useContext(AuthContext);
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    await auth?.login(email, password);
   };
 
   return (
