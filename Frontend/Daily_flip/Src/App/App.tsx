@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { Navigate } from 'react-router-dom';
+import { useContext } from 'react';
+import { AuthContext } from '../Context/AuthContext';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import MainView from './views/MainView';
@@ -10,8 +13,14 @@ import Leaderboards from './views/Leaderboards';
 import FriendsPage from './views/FriendsView';
 
 export default function App() {
+  const auth = useContext(AuthContext);
+  
+  if (!auth?.token) {
+    return <Navigate to="/" replace />;
+  }
+  
   const [activeItem, setActiveItem] = useState('main');
-
+  
   return (
     <div className="size-full flex flex-col bg-white">
       <Header />
