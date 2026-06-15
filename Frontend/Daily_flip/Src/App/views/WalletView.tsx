@@ -1,17 +1,26 @@
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import { GameContext } from "../../Context/GameContext";
+import { useContext } from 'react';
 
 interface WalletViewProps {
   onNavigate: (item: string) => void;
 }
 
 export default function WalletView({ onNavigate }: WalletViewProps) {
+  const { balance, refreshBalance } = useContext(GameContext);
+
   return (
     <div className="p-8 text-gray-900 max-w-7xl">
       <h2 className="text-3xl text-[#efbf04] mb-4 font-[Alexandria]">Wallet</h2>
       <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-6 border-b border-gray-50">
-          <p className="text-xl font-bold font-[Alexandria]">Balance: <span className="text-[#efbf04]">1,000 credits</span></p>
+          <p className="text-xl font-bold font-[Alexandria]">
+            Balance:{" "}
+            <span className="text-[#efbf04]">
+              {balance !== null ? `${balance} credits` : "Loading..."}
+            </span>
+          </p>
         </div>
         <div className="p-4">
           <ResponsiveContainer width="100%" height={300}>

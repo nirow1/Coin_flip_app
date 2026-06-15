@@ -10,6 +10,9 @@ class SolanaWebhookPayload(BaseModel):
     destination_address: str  # recipient's Solana public key
     amount_sol: Decimal       # amount in SOL
 
+class BalanceResponse(BaseModel):
+    balance: Decimal
+
 class WalletResponse(BaseModel):
     id: int
     balance: Decimal

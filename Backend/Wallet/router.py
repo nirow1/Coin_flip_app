@@ -1,4 +1,4 @@
-from Backend.Wallet.schemas import WalletResponse, TransactionResponse, AmountRequest, SolanaWebhookPayload
+from Backend.Wallet.schemas import BalanceResponse, TransactionResponse, AmountRequest, SolanaWebhookPayload
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from Backend.Auth.dependencies import get_current_user
@@ -8,11 +8,11 @@ from Backend.db import get_session
 
 router = APIRouter(prefix="/wallet", tags=["wallet"])
 
-@router.get("/balance", response_model=WalletResponse)
+@router.get("/balance", response_model=BalanceResponse)
 async def get_balance(current_user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     wallet_service = WalletService(session)
     wallet = await wallet_service.get_wallet(current_user.id)
-    return wallet
+    return BalanceResponse(balance=wallet.balance)
 
 @router.post("/credit", response_model=TransactionResponse)
 async def credit_wallet(data: AmountRequest, current_user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):

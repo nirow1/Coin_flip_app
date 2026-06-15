@@ -1,15 +1,31 @@
 import { createContext, useState, useContext, useEffect, ReactNode } from 'react';
-import { getBalance } from '../Api/game';
+import { getBalance } from '../Api/wallet';
 import { AuthContext } from './AuthContext';
 
-export const GameContext = React.createContext({
-  balance: number|null,
-  refreshBalance: () => Promise<void>,
+export const GameContext = createContext({
+  balance: null as number | null,
+  refreshBalance: async () => {},
 });
 
 export function GameProvider({ children }: { children: React.ReactNode }) {
-  const [gameState, setGameState] = useState({
-    currentGame: null,
-    gameHistory: [],
-    isLoading: false,
-  });
+  const [balance, setBalance] = useState<number | null>(null);
+
+  const refreshBalance = async () => {
+    try {
+      const res = await getBalance();
+      setBalance(res.data.balance);
+    } catch (err) {
+      console.error("Failed to fetch balance:", err);
+    }
+  };
+
+  useEffect(() => {
+    refreshBalance();
+  }, []);
+
+  return (
+    <GameContext.Provider value={{ balance, refreshBalance }}>
+      {children}
+    </GameContext.Provider>
+  );
+}

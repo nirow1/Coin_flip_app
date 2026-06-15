@@ -1,18 +1,21 @@
-  import { createRoot } from "react-dom/client";
-  import App from "./App/App.tsx";
-  import Login from "./App/views/LoginView.tsx";
-  import { BrowserRouter, Routes, Route } from "react-router-dom";
-  import { AuthProvider } from "./Context/AuthContext.tsx";
-  import "./styles/index.css";
+import { createRoot } from "react-dom/client";
+import App from "./App/App.tsx";
+import Login from "./App/views/LoginView.tsx";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { GameProvider } from "./Context/GameContext.tsx";
+import { AuthProvider } from "./Context/AuthContext.tsx";
+import "./styles/index.css";
 
-  createRoot(document.getElementById("root")!).render(
+createRoot(document.getElementById("root")!).render(
+  <BrowserRouter>
     <AuthProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Login />} />
-          <Route path="/app" element={<App />} />
-        </Routes>
-      </BrowserRouter>
+      <GameProvider>
+          <Routes>
+            <Route path="/" element={<Login />} />
+            <Route path="/app" element={<App />} />
+          </Routes>
+      </GameProvider>
     </AuthProvider>
-  );
+  </BrowserRouter>
+);
   
