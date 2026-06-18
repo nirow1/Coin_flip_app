@@ -32,7 +32,7 @@ async def test_verify_solana_transaction_success():
     mock_client = AsyncMock()
     mock_client.get_transaction.return_value = resp
 
-    with patch("Core.core_solana.AsyncClient", return_value=mock_client):
+    with patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client):
         result = await verify_solana_transaction(
             tx_hash="valid_tx_hash_abc123",
             expected_destination=DESTINATION,
@@ -49,7 +49,7 @@ async def test_verify_solana_transaction_not_found():
 
     mock_client = AsyncMock()
     mock_client.get_transaction.return_value = resp   # resp is returned, resp.value is None
-    with patch("Core.core_solana.AsyncClient", return_value=mock_client):
+    with patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client):
         with pytest.raises(ValueError, match="not found on-chain"):
             await verify_solana_transaction(
                 tx_hash="nonexistent_tx_hash_abc123",
@@ -65,7 +65,7 @@ async def test_verify_solana_transaction_meta_is_none():
 
     mock_client = AsyncMock()
     mock_client.get_transaction.return_value = resp   # return resp, not None
-    with patch("Core.core_solana.AsyncClient", return_value=mock_client):
+    with patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client):
         with pytest.raises(ValueError, match="failed on-chain"):
             await verify_solana_transaction(
                 tx_hash="tx_with_no_meta_abc123",
@@ -85,7 +85,7 @@ async def test_verify_solana_transaction_failed():
 
     mock_client = AsyncMock()
     mock_client.get_transaction.return_value = resp
-    with patch("Core.core_solana.AsyncClient", return_value=mock_client):
+    with patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client):
         with pytest.raises(ValueError, match="failed on-chain"):
             await verify_solana_transaction(
                 tx_hash="failed_tx_hash_abc123",
@@ -103,7 +103,7 @@ async def test_verify_solana_transaction_destination_not_found():
 
     mock_client = AsyncMock()
     mock_client.get_transaction.return_value = resp
-    with patch("Core.core_solana.AsyncClient", return_value=mock_client):
+    with patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client):
         with pytest.raises(ValueError, match=f"Destination address {DESTINATION} not found in transaction"):
             await verify_solana_transaction(
                 tx_hash="no_destination_tx_hash_abc123",
@@ -123,7 +123,7 @@ async def test_verify_solana_transaction_insufficient_amount():
     mock_client = AsyncMock()
     mock_client.get_transaction.return_value = resp
 
-    with patch("Core.core_solana.AsyncClient", return_value=mock_client):
+    with patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client):
         with pytest.raises(ValueError, match=f"credited only {EXPECTED_LAMPORTS - 5_000_000} lamports"):
             await verify_solana_transaction(
                 tx_hash="tx_with_no_meta_abc123",
@@ -143,7 +143,7 @@ async def test_verify_solana_transaction_accepts_overpayment():
     mock_client = AsyncMock()
     mock_client.get_transaction.return_value = resp
 
-    with patch("Core.core_solana.AsyncClient", return_value=mock_client):
+    with patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client):
          result = await verify_solana_transaction(
             tx_hash="tx_with_no_meta_abc123",
             expected_destination=DESTINATION,

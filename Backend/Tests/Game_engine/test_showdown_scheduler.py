@@ -15,7 +15,7 @@ async def test_showdown_scheduler_processes_expired_key():
     ]
     engine.pubsub.listen = MagicMock(return_value=async_iter(messages))
 
-    with patch("Game.engine.GameService", return_value=mock_service):
+    with patch("Backend.Game.engine.GameService", return_value=mock_service):
         await engine.showdown_scheduler()
 
     mock_service.execute_showdown_flip.assert_awaited_once_with(
@@ -33,7 +33,7 @@ async def test_showdown_scheduler_ignore_malformed_key():
     ]
     engine.pubsub.listen = MagicMock(return_value=async_iter(messages))
 
-    with patch("Game.engine.GameService", return_value=mock_service):
+    with patch("Backend.Game.engine.GameService", return_value=mock_service):
         await engine.showdown_scheduler()
 
     assert mock_service.execute_showdown_flip.await_count == 0  # ← fixed from execute_flip
@@ -49,7 +49,7 @@ async def test_showdown_scheduler_ignores_non_pmessage():
     ]
     engine.pubsub.listen = MagicMock(return_value=async_iter(messages))
 
-    with patch("Game.engine.GameService", return_value=mock_service):
+    with patch("Backend.Game.engine.GameService", return_value=mock_service):
         await engine.showdown_scheduler()
 
     assert mock_service.execute_showdown_flip.await_count == 0
@@ -67,7 +67,7 @@ async def test_showdown_scheduler_error_does_not_crash():
     ]
     engine.pubsub.listen = MagicMock(return_value=async_iter(messages))
 
-    with patch("Game.engine.GameService", return_value=mock_service):
+    with patch("Backend.Game.engine.GameService", return_value=mock_service):
         await engine.showdown_scheduler()  # must not raise
 
     assert mock_service.execute_showdown_flip.await_count == 2

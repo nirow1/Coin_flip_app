@@ -32,7 +32,7 @@ async def test_solana_webhook_success(solana_client):
         hashlib.sha256,
     ).hexdigest()
 
-    with patch("Wallet.services.verify_solana_transaction", new_callable=AsyncMock) as mock_verify:
+    with patch("Backend.Wallet.services.verify_solana_transaction", new_callable=AsyncMock) as mock_verify:
         mock_verify.return_value = True
 
         response = await client.post(

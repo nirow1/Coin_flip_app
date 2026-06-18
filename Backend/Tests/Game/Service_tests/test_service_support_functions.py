@@ -1,3 +1,6 @@
+from Backend.Game.service import GameService
+from Backend.Game.models import GamePlayer
+
 async def test_get_players_active_games(session, test_user, make_game):
     service = GameService(session)
 

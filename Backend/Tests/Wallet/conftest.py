@@ -1,5 +1,4 @@
 from unittest.mock import MagicMock, patch, mock_open
-
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from Backend.Wallet.router import router as wallet_router
 from Backend.Auth.router import router as auth_router
@@ -171,31 +170,11 @@ async def committed_user_and_wallet(engine):
 
     return [user.id, wallet.id]
 
-@pytest_asyncio.fixture(scope="session", loop_scope="session")
-async def solana_engine():
-    _engine = create_async_engine(TEST_DATABASE_URL)
-    async with _engine.connect() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.commit()
-    yield _engine
-    async with _engine.connect() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.commit()
-    await _engine.dispose()
-
-
-@pytest.fixture(scope="session")
-def solana_app():
-    app = FastAPI()
-    app.include_router(auth_router, prefix="/auth")
-    app.include_router(wallet_router)
-    return app
-
 
 @pytest.fixture(autouse=True)
 def mock_signature():
     """Prevent base58 decode errors — all tests use fake tx_hash strings."""
-    with patch("Core.core_solana.Signature.from_string", return_value=MagicMock()):
+    with patch("Backend.Core.core_solana.Signature.from_string", return_value=MagicMock()):
         yield
 
 
@@ -205,12 +184,12 @@ def mock_keypair():
     keypair = MagicMock()
     keypair.pubkey.return_value = MagicMock()
     with patch("builtins.open", mock_open(read_data='["fake_keypair_json"]')), \
-         patch("Core.core_solana.Keypair.from_json", return_value=keypair):
+         patch("Backend.Core.core_solana.Keypair.from_json", return_value=keypair):
         yield keypair
 
 
 @pytest_asyncio.fixture(loop_scope="session")
-async def solana_client(solana_engine, solana_app):
+async def solana_client(engine, test_app):
     """
     Provides an AsyncClient with:
       - a committed User, Wallet, and UserSolanaWallet in the DB
@@ -219,7 +198,7 @@ async def solana_client(solana_engine, solana_app):
     Returns a dict: {"client": AsyncClient, "token": str, "public_key": str, "user_id": int}
     """
     # --- Commit real data so it's visible across connections ---
-    async with solana_engine.connect() as setup_conn:
+    async with engine.connect() as setup_conn:
         await setup_conn.begin()
         sf = async_sessionmaker(bind=setup_conn, expire_on_commit=False)
         async with sf() as s:
@@ -251,7 +230,7 @@ async def solana_client(solana_engine, solana_app):
     token = create_access_token({"sub": str(user.id)})
 
     # --- Per-test rolled-back connection for the client ---
-    async with solana_engine.connect() as conn:
+    async with engine.connect() as conn:
         await conn.begin()
         test_sf = async_sessionmaker(bind=conn, expire_on_commit=False,
                                      join_transaction_mode="create_savepoint")
@@ -260,14 +239,14 @@ async def solana_client(solana_engine, solana_app):
             async with test_sf() as s:
                 yield s
 
-        solana_app.dependency_overrides[get_session] = override_get_session
+        test_app.dependency_overrides[get_session] = override_get_session
 
-        transport = ASGITransport(app=solana_app)
+        transport = ASGITransport(app=test_app)
         try:
             async with AsyncClient(transport=transport, base_url="http://test") as ac:
                 yield {"client": ac, "token": token,
                        "public_key": FAKE_SOLANA_ADDRESS, "user_id": user.id}
         finally:
-            solana_app.dependency_overrides.pop(get_session, None)
+            test_app.dependency_overrides.pop(get_session, None)
             await conn.rollback()
 

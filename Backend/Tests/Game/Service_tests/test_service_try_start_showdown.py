@@ -9,7 +9,7 @@ import pytest
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
-async def test_try_start_showdown_success(session, test_user, test_wallet, create_test_user, make_game, mock_leaderboard):
+async def test_try_start_showdown_success(session, test_user, create_test_user, make_game, mock_leaderboard):
     service = GameService(session)
     wallet = WalletService(session)
     redis = fakeredis.FakeRedis(decode_responses=True)

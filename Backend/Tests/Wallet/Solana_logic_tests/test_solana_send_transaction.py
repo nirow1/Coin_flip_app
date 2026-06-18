@@ -24,11 +24,11 @@ async def test_solana_send_transaction_success(mock_keypair):
     # Mock confirm_transaction
     mock_client.confirm_transaction.return_value = MagicMock()
 
-    with patch("Core.core_solana.AsyncClient", return_value=mock_client), \
-         patch("Core.core_solana.Transaction.new_signed_with_payer", return_value=MagicMock()), \
-         patch("Core.core_solana.Pubkey.from_string", return_value=MagicMock()), \
-         patch("Core.core_solana.TransferParams", return_value=MagicMock()), \
-         patch("Core.core_solana.transfer", return_value=MagicMock()):
+    with patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client), \
+         patch("Backend.Core.core_solana.Transaction.new_signed_with_payer", return_value=MagicMock()), \
+         patch("Backend.Core.core_solana.Pubkey.from_string", return_value=MagicMock()), \
+         patch("Backend.Core.core_solana.TransferParams", return_value=MagicMock()), \
+         patch("Backend.Core.core_solana.transfer", return_value=MagicMock()):
 
         result = await solana_send_transaction(
             destination_address=DESTINATION,
@@ -46,11 +46,11 @@ async def test_solana_send_transaction_rpc_unreachable(mock_keypair):
     mock_client = AsyncMock()
     mock_client.get_latest_blockhash.side_effect = Exception("RPC unreachable")
 
-    with patch("Core.core_solana.AsyncClient", return_value=mock_client), \
-         patch("Core.core_solana.Transaction.new_signed_with_payer", return_value=MagicMock()), \
-         patch("Core.core_solana.Pubkey.from_string", return_value=MagicMock()), \
-         patch("Core.core_solana.TransferParams", return_value=MagicMock()), \
-         patch("Core.core_solana.transfer", return_value=MagicMock()):
+    with patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client), \
+         patch("Backend.Core.core_solana.Transaction.new_signed_with_payer", return_value=MagicMock()), \
+         patch("Backend.Core.core_solana.Pubkey.from_string", return_value=MagicMock()), \
+         patch("Backend.Core.core_solana.TransferParams", return_value=MagicMock()), \
+         patch("Backend.Core.core_solana.transfer", return_value=MagicMock()):
         with pytest.raises(Exception, match="RPC unreachable"):
             await solana_send_transaction(
                 destination_address=DESTINATION,
@@ -68,11 +68,11 @@ async def test_solana_send_transaction_send_fails(mock_keypair):
     mock_client.get_latest_blockhash.return_value.value.blockhash = MagicMock()
     mock_client.send_raw_transaction.return_value.value = None
 
-    with patch("Core.core_solana.AsyncClient", return_value=mock_client), \
-            patch("Core.core_solana.Transaction.new_signed_with_payer", return_value=MagicMock()), \
-            patch("Core.core_solana.Pubkey.from_string", return_value=MagicMock()), \
-            patch("Core.core_solana.TransferParams", return_value=MagicMock()), \
-            patch("Core.core_solana.transfer", return_value=MagicMock()):
+    with patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client), \
+            patch("Backend.Core.core_solana.Transaction.new_signed_with_payer", return_value=MagicMock()), \
+            patch("Backend.Core.core_solana.Pubkey.from_string", return_value=MagicMock()), \
+            patch("Backend.Core.core_solana.TransferParams", return_value=MagicMock()), \
+            patch("Backend.Core.core_solana.transfer", return_value=MagicMock()):
         with pytest.raises(Exception, match="send_raw_transaction failed: no signature returned"):
             await solana_send_transaction(
                 destination_address=DESTINATION,
@@ -89,11 +89,11 @@ async def test_solana_send_transaction_confirm_fails(mock_keypair):
     mock_client.send_raw_transaction.return_value.value = FAKE_SIGNATURE
     mock_client.confirm_transaction.side_effect = Exception("Transaction failed to confirm")
 
-    with patch("Core.core_solana.AsyncClient", return_value=mock_client), \
-            patch("Core.core_solana.Transaction.new_signed_with_payer", return_value=MagicMock()), \
-            patch("Core.core_solana.Pubkey.from_string", return_value=MagicMock()), \
-            patch("Core.core_solana.TransferParams", return_value=MagicMock()), \
-            patch("Core.core_solana.transfer", return_value=MagicMock()):
+    with patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client), \
+            patch("Backend.Core.core_solana.Transaction.new_signed_with_payer", return_value=MagicMock()), \
+            patch("Backend.Core.core_solana.Pubkey.from_string", return_value=MagicMock()), \
+            patch("Backend.Core.core_solana.TransferParams", return_value=MagicMock()), \
+            patch("Backend.Core.core_solana.transfer", return_value=MagicMock()):
         with pytest.raises(Exception, match="SENT_UNCONFIRMED"):
             await solana_send_transaction(
                 destination_address=DESTINATION,
@@ -109,7 +109,7 @@ async def test_solana_send_transaction_keypair_file_not_found():
     mock_client = AsyncMock()
 
     with patch("builtins.open", side_effect=FileNotFoundError("No such file or directory")), \
-         patch("Core.core_solana.AsyncClient", return_value=mock_client):
+         patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client):
         with pytest.raises(FileNotFoundError):
             await solana_send_transaction(
                 destination_address=DESTINATION,

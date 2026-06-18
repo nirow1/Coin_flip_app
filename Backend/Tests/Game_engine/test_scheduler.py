@@ -16,7 +16,7 @@ async def test_a_scheduler_triggers_at_19_utc():
     mock_service.get_active_games = AsyncMock(return_value=[])
     mock_service.create_game = AsyncMock()
 
-    with patch("Game.engine.GameService", return_value=mock_service), \
+    with patch("Backend.Game.engine.GameService", return_value=mock_service), \
          patch("asyncio.sleep", side_effect=make_mock_sleep()):
         with pytest.raises(asyncio.CancelledError):
             await engine.daily_scheduler()
@@ -36,7 +36,7 @@ async def test_b_scheduler_triggers_at_19_utc():
 
     mock_service.get_active_games.return_value = [game]
 
-    with patch("Game.engine.GameService", return_value=mock_service), \
+    with patch("Backend.Game.engine.GameService", return_value=mock_service), \
          patch("asyncio.sleep", side_effect=make_mock_sleep()):
 
         with pytest.raises(asyncio.CancelledError):
@@ -64,7 +64,7 @@ async def test_scheduler_does_not_trigger_outside_19_utc():
     mock_service.get_active_games = AsyncMock(return_value=[])
     mock_service.create_game = AsyncMock()
 
-    with patch("Game.engine.GameService", return_value=mock_service), \
+    with patch("Backend.Game.engine.GameService", return_value=mock_service), \
          patch("asyncio.sleep", side_effect=make_mock_sleep()):
         with pytest.raises(asyncio.CancelledError):
             await engine.daily_scheduler()
@@ -85,7 +85,7 @@ async def test_scheduler_iter_games():
 
     mock_service.get_active_games.return_value = [game_1, game_2, game_3]
 
-    with patch("Game.engine.GameService", return_value=mock_service), \
+    with patch("Backend.Game.engine.GameService", return_value=mock_service), \
          patch("asyncio.sleep", side_effect=make_mock_sleep()):
 
         with pytest.raises(asyncio.CancelledError):
@@ -115,7 +115,7 @@ async def test_scheduler_showdown_trigger():
 
     mock_service.get_active_games.return_value = [game_1]
 
-    with patch("Game.engine.GameService", return_value=mock_service), \
+    with patch("Backend.Game.engine.GameService", return_value=mock_service), \
          patch("asyncio.sleep", side_effect=make_mock_sleep()):
 
         with pytest.raises(asyncio.CancelledError):
@@ -139,7 +139,7 @@ async def test_scheduler_game_error_continues_processing():
     mock_service.get_active_games.return_value = [game_1, game_2]
     mock_service.execute_flip.side_effect = [Exception("DB error"), None]  # game_1 fails
 
-    with patch("Game.engine.GameService", return_value=mock_service), \
+    with patch("Backend.Game.engine.GameService", return_value=mock_service), \
          patch("asyncio.sleep", side_effect=make_mock_sleep()):
         with pytest.raises(asyncio.CancelledError):
             await engine.daily_scheduler()
