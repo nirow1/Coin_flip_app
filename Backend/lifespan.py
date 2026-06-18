@@ -1,12 +1,12 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from Core.redis_config import create_redis_client
-from Leader_board.service import LeaderBoardService
-from db import init_db, SessionLocal
+from Backend.Core.redis_config import create_redis_client
+from Backend.Leader_board.service import LeaderBoardService
+from Backend.db import init_db, SessionLocal
 from fastapi import FastAPI
-from Wallet.services import WalletService
-from Game.engine import GameEngine
+from Backend.Wallet.services import WalletService
+from Backend.Game.engine import GameEngine
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

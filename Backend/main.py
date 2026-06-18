@@ -1,9 +1,9 @@
 import asyncio
 from fastapi.middleware.cors import CORSMiddleware
-from Wallet.router import router as wallet_router
-from Auth.router import router as auth_router
-from Game.router import router as game_router
-from lifespan import lifespan
+from Backend.Wallet.router import router as wallet_router
+from Backend.Auth.router import router as auth_router
+from Backend.Game.router import router as game_router
+from Backend.lifespan import lifespan
 from fastapi import FastAPI
 
 app = FastAPI(title="Daily Flip API", lifespan=lifespan)
