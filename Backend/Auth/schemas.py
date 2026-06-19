@@ -5,6 +5,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     country: str
+    username: str
     dob: date
 
     @field_validator('password')

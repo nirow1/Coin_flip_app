@@ -40,7 +40,7 @@ class AuthService:
         # Create user
         user = User(
             email=data.email,
-            username=None,
+            username=data.username,
             password_hash=hash_password(data.password),
             country=data.country,
             dob=data.dob
