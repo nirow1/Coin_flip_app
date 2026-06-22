@@ -15,6 +15,9 @@ export default function Login() {
     e.preventDefault();
     await auth?.login(email, password);
 
+    console.log("Auth state after login:", auth);
+    console.log("Auth token after login:", auth?.token);
+
     if (auth?.token) {
       navigate("/app");
     }

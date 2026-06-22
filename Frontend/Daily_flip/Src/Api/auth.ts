@@ -17,5 +17,5 @@ export interface TokenResponse {
 export const register = (data: RegisterData) =>
   client.post('/auth/register', data);
 
-export const login = (username: string, password: string) =>
-  client.post('/auth/login', { username, password });
+export const login = (email: string, password: string) =>
+  client.post('/auth/login', { email, password });

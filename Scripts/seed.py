@@ -7,6 +7,9 @@ from Backend.db import SessionLocal     # your async session factory
 from Backend.Auth.service import AuthService
 from Backend.Wallet.services import WalletService
 from Backend.Auth.schemas import RegisterRequest        # your Pydantic request model
+from Backend.Notification.models import Notification
+from Backend.Social.models import Friend
+from Backend.Leader_board.model import Leaderboard
 from Backend.Auth.models import User
 from sqlalchemy import select
 
