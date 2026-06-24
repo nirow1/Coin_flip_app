@@ -39,6 +39,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const register = async (data: RegisterData) => {
+    try{
+      const res = await apiRegister(data);
+      
+    }catch(err: any){
+      console.error("Register failed:", err);
+    }
+  };
+  
   return (
     <AuthContext.Provider value={{ user, token, isLoading, login }}>
       {children}
