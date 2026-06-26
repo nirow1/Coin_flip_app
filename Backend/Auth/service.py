@@ -1,3 +1,4 @@
+import random
 import jwt
 from fastapi.security import OAuth2PasswordBearer
 
@@ -14,13 +15,7 @@ from datetime import date
 class AuthService:
     oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-    @staticmethod
-    def _calculate_age(dob: date) -> int:
-        """Calculate age from date of birth"""
-        today = date.today()
-        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-        return age
-
+    # todo: add email verification, real KYC with name and surname, 
     @staticmethod
     async def register_user(data: RegisterRequest, session):
         # Validate age (must be 18+)
@@ -36,11 +31,14 @@ class AuthService:
         existing = await session.execute(select(User).where(User.email == data.email))
         if existing.scalar_one_or_none():
             raise ValueError("Email already registered")
+        
+        username_base = data.username
+        discriminator = AuthService._generate_discriminator(session, username_base)
 
         # Create user
         user = User(
             email=data.email,
-            username=data.username,
+            username=f"{username_base}#{discriminator}",
             password_hash=hash_password(data.password),
             country=data.country,
             dob=data.dob
@@ -98,3 +96,25 @@ class AuthService:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
         return user
+
+    @staticmethod
+    def _calculate_age(dob: date) -> int:
+        """Calculate age from date of birth"""
+        today = date.today()
+        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        return age
+    
+    # todo: not perfect, there is a possibility of collision, but for now it should be fine.
+    @staticmethod
+    def _generate_discriminator(db, base_username: str) -> str:
+        for _ in range(100):
+            disc = f"{random.randint(0, 9999):04d}"
+            exists = db.query(User).filter(
+                User.username == base_username,
+                User.discriminator == disc
+            ).first()
+
+            if not exists:
+                return disc
+
+        raise HTTPException(500, "Could not generate discriminator")
