@@ -1,7 +1,8 @@
 import { useContext, useState} from "react";
-import { Eye, EyeOff, Lock, Mail } from "lucide-react";
+import { Eye, EyeOff, Lock, Mail, Calendar } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../../Context/AuthContext";
+import { Countries } from "../../Data/Countries";
 
 export default function Register() {
   const auth = useContext(AuthContext);
@@ -10,6 +11,11 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [country, setCountry] = useState("");
+  const [dob, setDob] = useState("");
+
+  const passwordsMatch = password === confirmPassword && password.length > 0;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,6 +103,97 @@ export default function Register() {
               >
                 {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
+            </div>
+          </div>
+
+          {/* Confirm Password */}
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="confirmPassword" className="text-sm font-medium text-gray-700">
+              Confirm Password
+            </label>
+
+            <div className="relative">
+              <Lock
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+              />
+
+              <input
+                id="confirmPassword"
+                type={showPassword ? "text" : "password"}
+                placeholder="••••••••"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className={`w-full pl-9 pr-10 py-2.5 text-sm border rounded-lg outline-none transition
+                  ${confirmPassword.length === 0
+                    ? "border-gray-200"
+                    : passwordsMatch
+                      ? "border-green-500 focus:ring-green-600"
+                      : "border-red-500 focus:ring-red-600"
+                  }`}
+              />
+            </div>
+
+            {/* Validation message */}
+            {confirmPassword.length > 0 && !passwordsMatch && (
+              <p className="text-xs text-red-500">Passwords do not match</p>
+            )}
+          </div>
+
+          {/* Country */}
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="country" className="text-sm font-medium text-gray-700">
+              Country
+            </label>
+
+            <div className="relative">
+              <select
+                id="country"
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                className="w-full pl-3 pr-10 py-2.5 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition text-gray-900 bg-white appearance-none"
+              >
+                <option value="">Select your country</option>
+
+                {Countries.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+
+              {/* Dropdown arrow */}
+              <svg
+                className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          </div>
+
+          {/* Date of Birth */}
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="dob" className="text-sm font-medium text-gray-700">
+              Date of Birth
+            </label>
+
+            <div className="relative">
+              <Calendar
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+              />
+
+              <input
+                id="dob"
+                type="date"
+                value={dob}
+                onChange={(e) => setDob(e.target.value)}
+                className="w-full pl-9 pr-3 py-2.5 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition text-gray-900 bg-white"
+              />
             </div>
           </div>
 

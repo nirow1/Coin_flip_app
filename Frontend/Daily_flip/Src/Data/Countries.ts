@@ -1,0 +1,22 @@
+export const Countries = [
+  "Liechtenstein", "Luxembourg", "Ireland", "Switzerland", "Iceland",
+  "Singapore", "Norway", "United States", "Denmark", "Netherlands",
+  "Macao", "Australia", "Sweden", "San Marino", "Israel",
+  "Qatar", "Austria", "Germany", "Belgium", "United Kingdom",
+  "Canada", "Finland", "Hong Kong", "United Arab Emirates", "Malta",
+  "Andorra", "France", "New Zealand", "Italy", "Cyprus",
+  "Aruba", "Spain", "Bahamas", "Puerto Rico", "Slovenia",
+  "Czechia", "Saudi Arabia", "Estonia", "South Korea", "Lithuania",
+  "Brunei", "Japan", "Portugal", "Guyana", "Kuwait",
+  "Poland", "Slovakia", "Croatia", "Greece", "Bahrain",
+  "Barbados", "Latvia", "Hungary", "Uruguay", "Romania",
+  "Bulgaria", "Antigua and Barbuda", "Saint Kitts and Nevis", "Oman", "Palau",
+  "Panama", "Costa Rica", "Chile", "Maldives", "Turkey",
+  "Trinidad and Tobago", "Russia", "Seychelles", "Kazakhstan", "Serbia",
+  "Montenegro", "Nauru", "Mexico", "Saint Lucia", "Malaysia",
+  "China", "Argentina", "Mauritius", "Grenada", "Albania",
+  "Dominican Republic", "Brazil", "Turkmenistan", "North Macedonia", "Georgia",
+  "Belarus", "Saint Vincent and the Grenadines", "Peru", "Bosnia and Herzegovina", "Dominica",
+  "Armenia", "Colombia", "Gabon", "Marshall Islands", "Paraguay",
+  "Moldova", "Suriname", "Botswana", "Jamaica", "Equatorial Guinea"
+];
