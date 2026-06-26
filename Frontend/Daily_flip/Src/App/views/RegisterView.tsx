@@ -1,8 +1,9 @@
 import { useContext, useState} from "react";
-import { Eye, EyeOff, Lock, Mail, Calendar } from "lucide-react";
+import { Eye, EyeOff, Lock, Mail, Calendar, User } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../../Context/AuthContext";
 import { Countries } from "../../Data/Countries";
+import { RegisterData } from "../../Api/auth";
 
 export default function Register() {
   const auth = useContext(AuthContext);
@@ -10,6 +11,7 @@ export default function Register() {
 
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [country, setCountry] = useState("");
@@ -19,7 +21,8 @@ export default function Register() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await auth?.register({ email, password });
+    const registerData: RegisterData = { email, password, country, dob, username };
+    await auth?.register(registerData);
 
     console.log("Auth state after login:", auth);
     console.log("Auth token after login:", auth?.token);
@@ -66,6 +69,39 @@ export default function Register() {
                 className="w-full pl-9 pr-3 py-2.5 text-sm border border-gray-200 rounded-lg outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition placeholder:text-gray-400 text-gray-900"
               />
             </div>
+          </div>
+
+          {/* Username */}
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="username" className="text-sm font-medium text-gray-700">
+              Username
+            </label>
+
+            <div className="relative">
+              <User
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+              />
+
+              <input
+                id="username"
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="yourusername"
+                className={`w-full pl-9 pr-3 py-2.5 text-sm border rounded-lg outline-none transition
+                  ${username.length === 0
+                    ? "border-gray-200"
+                    : username.length >= 5
+                      ? "border-green-500 focus:ring-2 focus:ring-green-600"
+                      : "border-red-500 focus:ring-2 focus:ring-red-600"
+                  } text-gray-900`}
+              />
+            </div>
+
+            {username.length > 0 && username.length < 5 && (
+              <p className="text-xs text-red-500">Username must be at least 5 characters</p>
+            )}
           </div>
 
           {/* Password */}
