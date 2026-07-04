@@ -4,6 +4,7 @@ import Login from "./App/views/LoginView.tsx";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { GameProvider } from "./Context/GameContext.tsx";
 import { AuthProvider } from "./Context/AuthContext.tsx";
+import Register from "./App/views/RegisterView.tsx";
 import "./styles/index.css";
 
 createRoot(document.getElementById("root")!).render(
@@ -12,6 +13,7 @@ createRoot(document.getElementById("root")!).render(
       <GameProvider>
           <Routes>
             <Route path="/" element={<Login />} />
+            <Route path="/register" element={<Register />} />
             <Route path="/app" element={<App />} />
           </Routes>
       </GameProvider>

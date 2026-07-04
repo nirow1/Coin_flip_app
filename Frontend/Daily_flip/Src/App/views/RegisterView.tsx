@@ -43,8 +43,8 @@ export default function Register() {
           <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center mb-1">
             <Lock size={20} className="text-gray-600" />
           </div>
-          <h1 className="text-xl font-semibold text-gray-900">Welcome back</h1>
-          <p className="text-sm text-gray-500">Sign in to your account</p>
+          <h1 className="text-xl font-semibold text-gray-900">Welcome to Daily Flip</h1>
+          <p className="text-sm text-gray-500">Create your account</p>
         </div>
 
         {/* Form */}
@@ -249,11 +249,11 @@ export default function Register() {
           <div className="flex-1 h-px bg-gray-100" />
         </div>
 
-        {/* Sign up */}
+        {/* Sign in */}
         <p className="text-center text-sm text-gray-500">
-          Don't have an account?{" "}
-          <a href="#" className="text-gray-900 font-medium hover:underline">
-            Sign up
+          Already have an account?{" "}
+          <a href="/" className="text-gray-900 font-medium hover:underline">
+            Sign in
           </a>
         </p>
       </div>
