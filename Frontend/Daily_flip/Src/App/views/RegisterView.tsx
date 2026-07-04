@@ -22,12 +22,9 @@ export default function Register() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const registerData: RegisterData = { email, password, country, dob, username };
-    await auth?.register(registerData);
+    const ok = await auth?.register(registerData);
 
-    console.log("Auth state after login:", auth);
-    console.log("Auth token after login:", auth?.token);
-
-    if (auth?.token) {
+    if (ok) {
       navigate("/app");
     }
   };

@@ -33,7 +33,7 @@ class AuthService:
             raise ValueError("Email already registered")
         
         username_base = data.username
-        discriminator = AuthService._generate_discriminator(session, username_base)
+        discriminator = await AuthService._generate_discriminator(username_base, session)
 
         # Create user
         user = User(
@@ -106,13 +106,18 @@ class AuthService:
     
     # todo: not perfect, there is a possibility of collision, but for now it should be fine.
     @staticmethod
-    def _generate_discriminator(db, base_username: str) -> str:
+    async def _generate_discriminator(base_username: str, session) -> str:
         for _ in range(100):
             disc = f"{random.randint(0, 9999):04d}"
-            exists = db.query(User).filter(
-                User.username == base_username,
-                User.discriminator == disc
-            ).first()
+
+            result = await session.execute(
+                select(User).where(
+                    User.username == base_username,
+                    User.discriminator == disc
+                )
+            )
+
+            exists = result.scalar_one_or_none()
 
             if not exists:
                 return disc

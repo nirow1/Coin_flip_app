@@ -41,15 +41,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const register = async (data: RegisterData) => {
-    try{
-      await apiRegister(data);
-    }catch(err: any){
-      console.error("Register failed:", err);
-    } finally {
-      setIsLoading(false);
+  const register = async (data: RegisterData): Promise<boolean> => {
+  setIsLoading(true);
+
+  try {
+    const res = await apiRegister(data);
+
+    // Backend succeeded → extract token
+    const { access_token } = res.data;
+
+    if (!access_token) {
+      console.error("Register succeeded but no token returned");
+      return false;
     }
-  };
+
+    localStorage.setItem("token", access_token);
+    setToken(access_token);
+
+    return true;
+
+  } catch (err) {
+    console.error("Register failed:", err);
+
+    // Clear stale token
+    localStorage.removeItem("token");
+    setToken(null);
+
+    return false;
+
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const logout = () => {
     localStorage.removeItem('token');
