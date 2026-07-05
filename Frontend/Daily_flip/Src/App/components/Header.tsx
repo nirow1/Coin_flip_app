@@ -1,12 +1,16 @@
-import { useState } from 'react';
+import { useContext, useState } from 'react';
 import { motion } from 'motion/react';
+import { AuthContext } from "../../Context/AuthContext";
 
 export default function Header() {
   const [isLogoutShining, setIsLogoutShining] = useState(false);
+  const { logout } = useContext(AuthContext);
 
-  const handleLogoutClick = () => {
+
+  const handleLogoutClick = () => {    
     setIsLogoutShining(true);
     setTimeout(() => setIsLogoutShining(false), 600);
+    logout();
   };
 
   return (
