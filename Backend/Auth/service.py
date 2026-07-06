@@ -38,7 +38,8 @@ class AuthService:
         # Create user
         user = User(
             email=data.email,
-            username=f"{username_base}#{discriminator}",
+            username=data.username,
+            discriminator=discriminator,
             password_hash=hash_password(data.password),
             country=data.country,
             dob=data.dob
