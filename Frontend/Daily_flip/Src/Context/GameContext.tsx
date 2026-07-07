@@ -8,10 +8,15 @@ export const GameContext = createContext({
 });
 
 export function GameProvider({ children }: { children: React.ReactNode }) {
+  const { token } = useContext(AuthContext);
   const [balance, setBalance] = useState<number | null>(null);
 
   const refreshBalance = async () => {
     try {
+      if (!token) {
+        setBalance(null);
+        return;
+      }
       const res = await getBalance();
       setBalance(res.data.balance);
     } catch (err) {
@@ -20,8 +25,10 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    refreshBalance();
-  }, []);
+    if (token) {
+      refreshBalance();
+    }
+  }, [token]);
 
   return (
     <GameContext.Provider value={{ balance, refreshBalance }}>

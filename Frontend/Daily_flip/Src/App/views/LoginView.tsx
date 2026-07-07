@@ -1,4 +1,4 @@
-import { useContext, useState} from "react";
+import { useContext, useState, useEffect} from "react";
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AuthContext } from "../../Context/AuthContext";
@@ -11,13 +11,16 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await auth?.login(email, password);
 
+  useEffect(() => {
     if (auth?.token) {
       navigate("/app");
     }
+  }, [auth?.token]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await auth?.login(email, password);
   };
 
   return (

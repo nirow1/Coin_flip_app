@@ -4,5 +4,12 @@ export interface BalanceResponse {
     balance: number;
 }
 
-export const getBalance = () =>
-  client.get<BalanceResponse>('/wallet/balance');
+export const getBalance = () => {
+  const token = localStorage.getItem('token');
+
+  return client.get<BalanceResponse>('/wallet/balance', {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+};
