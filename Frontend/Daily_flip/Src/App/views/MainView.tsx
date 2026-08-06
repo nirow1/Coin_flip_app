@@ -1,20 +1,40 @@
 import { useState, useEffect } from 'react';
 import { Clock, TrendingUp } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { useContext } from 'react';
+import { GameContext } from "../../Context/GameContext";
 
-function useCountdown(target: number) {
-  const [timeLeft, setTimeLeft] = useState(target);
+function secondsUntilNextRound(): number {
+  const now = new Date();
+  const target = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    19, 0, 0, 0
+  ));
+
+  if (now.getTime() >= target.getTime()) {
+    target.setUTCDate(target.getUTCDate() + 1);
+  }
+
+  return Math.max(0, Math.floor((target.getTime() - now.getTime()) / 1000));
+}
+
+function useCountdown() {
+  const [timeLeft, setTimeLeft] = useState(secondsUntilNextRound);
   useEffect(() => {
-    const id = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
+    const id = setInterval(() => setTimeLeft(secondsUntilNextRound()), 1000);
     return () => clearInterval(id);
   }, []);
-  const m = String(Math.floor(timeLeft / 60)).padStart(2, '0');
+  const h = String(Math.floor(timeLeft / 3600)).padStart(2, '0');
+  const m = String(Math.floor((timeLeft % 3600) / 60)).padStart(2, '0');
   const s = String(timeLeft % 60).padStart(2, '0');
-  return `${m}:${s}`;
+  return { display: `${h}:${m}:${s}`, timeLeft };
 }
 
 function GameWidget() {
-  const countdown = useCountdown(847);
+  const { display: countdown, timeLeft } = useCountdown();
+  const isUrgent = timeLeft < 300;
   const [joined, setJoined] = useState(false);
   const [animating, setAnimating] = useState(false);
 
@@ -49,7 +69,8 @@ function GameWidget() {
         {/* Timer */}
         <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-5 py-2.5">
           <Clock size={15} className="text-[#efbf04]" />
-          <span className="font-mono font-bold text-xl text-gray-800">{countdown}</span>
+          <span className="font-mono font-bold text-xl ${
+          isUrgent ? 'text-red-500' : 'text-gray-800'}">{countdown}</span>
         </div>
 
         {/* Join button */}
