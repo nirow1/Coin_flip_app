@@ -81,3 +81,11 @@ async def get_all_games(user: User = Depends(get_current_admin), session: AsyncS
     game_service = GameService(session)
     games = await game_service.get_all_games()
     return [GameResponse.model_validate(g) for g in games]
+
+@router.get("/open", response_model=GameResponse)
+async def get_open_game(session: AsyncSession = Depends(get_session)):
+    game_service = GameService(session)
+    game = await game_service.get_open_game()
+    if game is None:
+        raise HTTPException(status_code=404, detail="No open game available")
+    return GameResponse.model_validate(game)

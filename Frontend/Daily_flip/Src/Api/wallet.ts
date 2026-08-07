@@ -1,15 +1,7 @@
 import client from './client';
 
 export interface BalanceResponse {
-    balance: number;
+  balance: number;
 }
 
-export const getBalance = () => {
-  const token = localStorage.getItem('token');
-
-  return client.get<BalanceResponse>('/wallet/balance', {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
-};
+export const getBalance = () => client.get<BalanceResponse>('/wallet/balance');

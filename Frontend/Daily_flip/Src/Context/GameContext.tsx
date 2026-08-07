@@ -1,15 +1,21 @@
-import { createContext, useState, useContext, useEffect, ReactNode } from 'react';
+import { createContext, useState, useContext, useEffect, type ReactNode } from 'react';
 import { getBalance } from '../Api/wallet';
+import { getOpenGame, GameResponse } from '../Api/game';
 import { AuthContext } from './AuthContext';
 
-export const GameContext = createContext({
-  balance: null as number | null,
-  refreshBalance: async () => {},
-});
+interface GameContextType {
+  balance: number | null;
+  refreshBalance: () => Promise<void>;
+  liveGame: GameResponse | null;
+  refreshLiveGame: () => Promise<void>;
+}
 
-export function GameProvider({ children }: { children: React.ReactNode }) {
+export const GameContext = createContext<GameContextType>({} as GameContextType);
+
+export function GameProvider({ children }: { children: ReactNode }) {
   const { token } = useContext(AuthContext);
   const [balance, setBalance] = useState<number | null>(null);
+  const [liveGame, setLiveGame] = useState<GameResponse | null>(null);
 
   const refreshBalance = async () => {
     try {
@@ -24,14 +30,30 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const refreshLiveGame = async () => {
+    try {
+      const res = await getOpenGame();
+      setLiveGame(res.data);
+    } catch (err) {
+      console.error("Failed to fetch live game:", err);
+      setLiveGame(null);
+    }
+  };
+
+  useEffect(() => {
+    refreshLiveGame();
+  }, []);
+
   useEffect(() => {
     if (token) {
       refreshBalance();
+    } else {
+      setBalance(null);
     }
   }, [token]);
 
   return (
-    <GameContext.Provider value={{ balance, refreshBalance }}>
+    <GameContext.Provider value={{ balance, refreshBalance, liveGame, refreshLiveGame }}>
       {children}
     </GameContext.Provider>
   );

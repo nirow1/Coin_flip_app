@@ -16,7 +16,6 @@ function secondsUntilNextRound(): number {
   if (now.getTime() >= target.getTime()) {
     target.setUTCDate(target.getUTCDate() + 1);
   }
-
   return Math.max(0, Math.floor((target.getTime() - now.getTime()) / 1000));
 }
 
@@ -37,6 +36,11 @@ function GameWidget() {
   const isUrgent = timeLeft < 300;
   const [joined, setJoined] = useState(false);
   const [animating, setAnimating] = useState(false);
+  const { liveGame } = useContext(GameContext);
+  const prizePoolDisplay =
+    liveGame?.prize_pool != null
+      ? Number(liveGame.prize_pool).toLocaleString()
+      : '—';
 
   const handleJoin = () => {
     setAnimating(true);
@@ -49,7 +53,9 @@ function GameWidget() {
       <div className="px-5 pt-5 pb-0 flex items-start bg-[#00000000]">
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest font-[Alexandria] text-[#000000]">Live Round</p>
-          <p className="text-lg font-bold font-[Alexandria] text-[#efbf04]">#2847</p>
+          <p className="text-lg font-bold font-[Alexandria] text-[#efbf04]">
+            {liveGame?.id != null ? `#${liveGame.id}` : '—'}
+          </p>
         </div>
       </div>
 
@@ -61,7 +67,7 @@ function GameWidget() {
           <p
             className="text-6xl text-[#ffcc00] font-bold font-[Bebas_Neue] tracking-[0.05em]"
           >
-            8,500
+            {prizePoolDisplay}
           </p>
           <p className="text-sm text-gray-400 font-[Alexandria] mt-1">coins</p>
         </div>
@@ -69,8 +75,10 @@ function GameWidget() {
         {/* Timer */}
         <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-5 py-2.5">
           <Clock size={15} className="text-[#efbf04]" />
-          <span className="font-mono font-bold text-xl ${
-          isUrgent ? 'text-red-500' : 'text-gray-800'}">{countdown}</span>
+          <span className={`font-mono font-bold text-xl ${
+            isUrgent ? 'text-red-500' : 'text-gray-800'}`}>
+              {countdown}
+          </span>
         </div>
 
         {/* Join button */}
