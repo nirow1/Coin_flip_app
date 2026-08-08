@@ -1,0 +1,50 @@
+---
+description: Reviews and issue reports must cite exact file paths and line numbers
+alwaysApply: true
+---
+
+# Locate Issues Precisely
+
+When reporting bugs, gaps, or review findings, every issue must include a concrete code location. Vague section titles alone are not enough.
+
+## Required format per finding
+
+1. **Short title** of the problem
+2. **Where** — `path` plus line range (use the real lines from the file)
+3. **What** — one or two sentences on the bug/behavior
+4. **Fix** — concrete suggestion
+
+Prefer Cursor code citations:
+
+```startLine:endLine:path/to/file
+// relevant snippet
+```
+
+## Example (good)
+
+**Promise.all treats missing open game as total failure**
+
+```87:99:Frontend/Daily_flip/Src/Context/GameContext.tsx
+const [openRes, currentRes] = await Promise.all([
+  getOpenGame(),
+  getCurrentGames(),
+]);
+// ...
+} catch (err) {
+  setHasJoined(false);
+}
+```
+
+`GET /game/open` 404 fails the whole batch, so `/game/current` success is discarded. Fetch separately (or treat 404 as no live game).
+
+## Example (bad)
+
+> Gaps in GameContext: Promise.all fails if there’s no open game. Also currentGames not updated after join. Duplicate fetches.
+
+No paths, no lines — do not write reviews this way.
+
+## Also apply when
+
+- Explaining why something breaks
+- Listing multiple issues (each gets its own path + lines)
+- Suggesting a refactor (point at the exact effect/function to change)

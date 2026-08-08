@@ -16,7 +16,7 @@ class GameService:
         self.session = session
 
     # ─── Public API ───────────────────────────────────────────────
-    async def join_game(self, user_id: int, side: str, wallet: WalletService) -> GamePlayer:
+    async def join_game(self, user_id: int, side: str, wallet: WalletService, redis_client: Redis) -> (GamePlayer, Game):
         self._validate_side(side)
 
         game = await self._get_or_raise_open_game()
@@ -27,7 +27,9 @@ class GameService:
         self._check_lockout(game)
 
         await wallet.debit(user_id, Decimal("1.00"))
-        return await self._add_player_to_game(game, user_id, side)
+        player = await self._add_player_to_game(game, user_id, side)
+        await self._record_choice(game.id, 1, side, redis_client)
+        return (player, game)
 
     async def invite_friend(self, user_id: int, friend_id: int, wallet: WalletService) -> bool:
         game = await self._get_or_raise_open_game()

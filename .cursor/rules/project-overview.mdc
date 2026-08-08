@@ -1,0 +1,35 @@
+---
+description: Coin Flip app architecture and where code lives
+alwaysApply: true
+---
+
+# Project Overview
+
+Daily Flip is a coin-flip game: FastAPI backend + React (Vite) frontend.
+
+## Layout
+
+- `Backend/` — FastAPI API (`main.py` mounts routers)
+- `Frontend/Daily_flip/` — React app (`Src/App`, `Src/Api`, `Src/Context`)
+- `Backend/Tests/` — pytest suites mirrored by domain
+- `Scripts/` — utilities (e.g. seed)
+
+## Backend domains
+
+| Prefix / area | Folder | Responsibility |
+|---|---|---|
+| `/auth` | `Backend/Auth/` | Register, login, JWT user deps |
+| `/game` | `Backend/Game/` | Join, choose side, showdown, open/current games |
+| Wallet | `Backend/Wallet/` | Balance, deposits, Solana |
+| Other | `Notification/`, `Leader_board/`, `Social/` | Supporting features |
+
+Typical layering per domain: `router.py` → `service.py` → models/schemas. Shared DB session: `Backend/db.py`.
+
+## Frontend
+
+- `Src/Api/` — Axios client + thin endpoint wrappers (`game.ts`, `wallet.ts`, …)
+- `Src/Context/` — Auth + game state (`AuthContext`, `GameContext`)
+- `Src/App/views/` — Screens (`MainView`, `WalletView`, …)
+- `Src/App/components/` — UI (e.g. `CoinFlip.tsx`)
+
+Game HTTP surface used by the client today: `GET /game/open`, `GET /game/current`, `POST /game/join?side=`.

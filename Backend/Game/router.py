@@ -14,14 +14,17 @@ router = APIRouter()
 
 
 @router.post("/join")
-async def join_game(side: str, user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+async def join_game(side: str,
+                    redis_client: Redis = Depends(get_redis),
+                    user: User = Depends(get_current_user),
+                    session: AsyncSession = Depends(get_session)):
     wallet_service = WalletService(session)
     game_service = GameService(session)
     try:
-        await game_service.join_game(user.id, side, wallet_service)
+        (player, game) = await game_service.join_game(user.id, side, wallet_service, redis_client)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    return {"message": "Joined game successfully"}
+    return {"player": GamePlayerResponse.model_validate(player), "game": GameResponse.model_validate(game)}
 
 
 @router.post("/choose")
