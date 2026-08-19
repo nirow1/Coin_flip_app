@@ -27,10 +27,9 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Cancel schedulers on shutdown
+    # Cancel schedulers on shutdown; run_if_leader releases the lock if we hold it.
     leader_task.cancel()
     await asyncio.gather(leader_task, return_exceptions=True)
-    await lock.release()
     await pubsub.unsubscribe()
     await pubsub.aclose()
     await redis_client.aclose()
