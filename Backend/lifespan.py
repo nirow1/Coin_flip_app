@@ -1,12 +1,15 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from Backend.Core.redis_config import create_redis_client
-from Backend.Leader_board.service import LeaderBoardService
-from Backend.db import init_db, SessionLocal
 from fastapi import FastAPI
-from Backend.Wallet.services import WalletService
+
+from Backend.Core.leader_lock import LeaderLock, run_if_leader
+from Backend.Core.redis_config import create_redis_client
+from Backend.db import SessionLocal, init_db
 from Backend.Game.engine import GameEngine
+from Backend.Leader_board.service import LeaderBoardService
+from Backend.Wallet.services import WalletService
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -19,15 +22,15 @@ async def lifespan(app: FastAPI):
     pubsub = redis_client.pubsub()
     leaderboard_service = LeaderBoardService(SessionLocal)
     engine = GameEngine(SessionLocal, wallet_service, leaderboard_service, redis_client, pubsub)
-    daily_task = asyncio.create_task(engine.daily_scheduler())
-    showdown_task = asyncio.create_task(engine.showdown_scheduler())
+    lock = LeaderLock(redis_client, key="scheduler:leader", ttl_ms=10_000)
+    leader_task = asyncio.create_task(run_if_leader(lock, engine))
 
     yield
 
     # Cancel schedulers on shutdown
-    daily_task.cancel()
-    showdown_task.cancel()
-    await asyncio.gather(daily_task, showdown_task, return_exceptions=True)
+    leader_task.cancel()
+    await asyncio.gather(leader_task, return_exceptions=True)
+    await lock.release()
     await pubsub.unsubscribe()
     await pubsub.aclose()
     await redis_client.aclose()
