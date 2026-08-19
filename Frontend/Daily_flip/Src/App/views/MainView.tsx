@@ -3,6 +3,7 @@ import { Clock, TrendingUp } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useContext } from 'react';
 import { GameContext } from "../../Context/GameContext";
+import { JoinSidePicker } from '../components/JoinSidePicker';
 
 function secondsUntilNextRound(): number {
   const now = new Date();
@@ -34,18 +35,13 @@ function useCountdown() {
 function GameWidget() {
   const { display: countdown, timeLeft } = useCountdown();
   const isUrgent = timeLeft < 300;
-  const [joined, setJoined] = useState(false);
-  const [animating, setAnimating] = useState(false);
-  const { liveGame } = useContext(GameContext);
+  const { liveGame, hasJoined, joining, joinError } = useContext(GameContext);
+  const [ pickerOpen, setPickerOpen ] = useState(false);
+  
   const prizePoolDisplay =
     liveGame?.prize_pool != null
       ? Number(liveGame.prize_pool).toLocaleString()
       : '—';
-
-  const handleJoin = () => {
-    setAnimating(true);
-    setTimeout(() => { setJoined(true); setAnimating(false); }, 600);
-  };
 
   return (
     <div className="bg-[#fcfcfc] rounded-2xl shadow-sm border-8 border-[#fff] overflow-hidden">
@@ -83,19 +79,21 @@ function GameWidget() {
 
         {/* Join button */}
         <button
-          onClick={handleJoin}
-          disabled={joined}
+          onClick={() => setPickerOpen(true)}
+          disabled={hasJoined || joining || !liveGame || isUrgent}
           className={`relative w-[300px] py-3 rounded-xl font-bold font-[Alexandria] text-sm transition-all overflow-hidden
-            ${joined
+            ${hasJoined
               ? 'bg-green-50 text-green-600 border border-green-200 cursor-default'
               : 'bg-[#efbf04] hover:bg-[#d4a800] text-white shadow-md hover:shadow-lg active:scale-[0.98]'
-            } ${animating ? 'shine-effect' : ''}`}
+            }`}
         >
           <span className="relative z-10">
-            {joined ? '✓ Joined — Good luck!' : 'Join Game'}
+            {hasJoined ? '✓ Joined — Good luck!' : 'Join Game'}
           </span>
         </button>
       </div>
+
+      <JoinSidePicker open={pickerOpen} onOpenChange={setPickerOpen} />
     </div>
   );
 }
