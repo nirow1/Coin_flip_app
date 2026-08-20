@@ -1,14 +1,15 @@
 import secrets
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession
-from Backend.Leader_board.service import LeaderBoardService
-from Backend.Wallet.services import WalletService
-from Backend.Game.models import Game, GamePlayer
-from typing import Optional, List
 from sqlalchemy import select
-from decimal import Decimal
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from Backend.Game.models import Game, GamePlayer
+from Backend.Leader_board.service import LeaderBoardService
+from Backend.Wallet.enums import TransactionType
+from Backend.Wallet.services import WalletService
 
 
 class GameService:
@@ -27,7 +28,7 @@ class GameService:
         self._check_lockout(game)
 
         await wallet.debit(user_id, Decimal("1.00"))
-        player = await self._add_player_to_game(game, user_id, side)
+        player = await self._add_player_to_game(game, user_id, side, paid_by_user_id=user_id)
         await self._record_choice(game.id, 1, side, redis_client)
         return (player, game)
 
@@ -40,7 +41,7 @@ class GameService:
         self._check_lockout(game)
 
         await wallet.debit(user_id, Decimal("1.00"))
-        await self._add_player_to_game(game, friend_id, None)
+        await self._add_player_to_game(game, friend_id, None, paid_by_user_id=user_id)
         return True
 
     async def choose_side(self, user_id: int, game_id: int, side: str, redis_client: Redis) -> dict:
@@ -66,7 +67,7 @@ class GameService:
         await self._record_choice(game_id, player.round_number, side, redis_client)
         return await self.get_percentages(game_id, player.round_number, redis_client)
 
-    async def get_players_active_games(self, user_id: int) -> List[Game]:
+    async def get_players_active_games(self, user_id: int) -> list[Game]:
         result = await self.session.execute(select(Game)
                                              .join(GamePlayer, Game.id == GamePlayer.game_id)
                                              .where(GamePlayer.user_id == user_id,
@@ -136,7 +137,7 @@ class GameService:
     async def try_start_showdown(self, game_id: int,
                                  wallet: WalletService,
                                  leaderboard: LeaderBoardService,
-                                 redis_client: Redis) -> Optional[Game]:
+                                 redis_client: Redis) -> Game | None:
         game = await self._get_game_by_id(game_id)
 
         if game.status != "showdown_pending":
@@ -211,11 +212,12 @@ class GameService:
         await redis_client.set(f"showdown_flip:{game_id}:{players[0].round_number}", "1", ex=60)
         return await self._set_game_state(game, "showdown_active")
 
+    # ─── Open-game lifecycle (engine recovery) ────────────────────
     async def create_game(self, flip_time: datetime) -> Game:
         new_game = Game(status="open",
                         start_date=datetime.now(timezone.utc),
                         flip_time=flip_time,
-                        prize_pool=Decimal("0"),
+                        prize_pool=Decimal(0),
                         initial_player_count=None,
                         current_player_count=0,
                         showdown_active=False)
@@ -224,24 +226,84 @@ class GameService:
         await self.session.flush()
         return new_game
 
-    async def get_all_games(self) -> List[Game]:
+    def next_daily_flip_time(self, now: datetime | None = None) -> datetime:
+        now = now or datetime.now(timezone.utc)
+        candidate = now.replace(hour=19, minute=0, second=0, microsecond=0)
+        if now >= candidate:
+            candidate += timedelta(days=1)
+        return candidate
+
+    async def ensure_open_game(self, wallet: WalletService) -> Game | None:
+        await self.cancel_stale_open_games(wallet)
+
+        game = await self.get_open_game()
+
+        if game is None:
+            return await self.create_game(self.next_daily_flip_time())
+
+        return game
+
+    async def cancel_stale_open_games(self, wallet: WalletService):
+        # 1m grace after flip_time so the 19:00 flip path can finish before refunds.
+        games = await self.get_open_games()
+        for game in games:
+            if game.flip_time < datetime.now(timezone.utc) - timedelta(minutes=1):
+                await self.cancel_game(game.id, wallet)
+
+    async def cancel_game(self, game_id: int, wallet: WalletService):
+        """Cancel an open/active game and refund each seat's join fee.
+
+        TODO(void-game): showdown_pending / showdown_active / finished need a separate
+        void path — claw back amount_won, reverse leaderboard earnings, honour
+        withdrawal locks, and never stack a 1.00 seat refund on top of cashouts.
+        """
+        game = await self._get_game_by_id(game_id)
+        if game.status not in ("open", "active"):
+            raise ValueError("Only open or active games can be canceled")
+
+        # All seats (including eliminated) paid 1.00; refund each for open/active void.
+        # House absorbs the 2% edge if the game had already flipped (prize_pool *= 0.98).
+        players = await self.get_all_players(game_id)
+        for player in players:
+            await self._refund(player, game, wallet)
+
+        game.prize_pool = Decimal(0)
+        game.status = "canceled"
+        await self.session.flush()
+        return game
+
+    # ─── Queries ──────────────────────────────────────────────────
+    async def get_all_games(self) -> list[Game]:
         result = await self.session.execute(select(Game).order_by(Game.id.desc()))
         return list(result.scalars().all())
 
-    async def get_all_players(self, game_id: int) -> List[GamePlayer]:
+    async def get_all_players(self, game_id: int) -> list[GamePlayer]:
         result = await self.session.execute(select(GamePlayer).where(GamePlayer.game_id == game_id))
         return list(result.scalars().all())
 
-    async def get_active_games(self) -> List[Game]:
+    async def get_open_game(self, lock: bool = False) -> Game | None:
+        query = select(Game).where(Game.status == "open").order_by(Game.flip_time.asc())
+        if lock:
+            query = query.with_for_update()
+        result = await self.session.execute(query)
+        return result.scalars().first()
+
+    async def get_open_games(self) -> list[Game]:
+        result = await self.session.execute(
+            select(Game).where(Game.status == "open").order_by(Game.flip_time.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_active_games(self) -> list[Game]:
         result = await self.session.execute(select(Game).where(Game.status.in_(["open", "active", "showdown_pending"])).order_by(Game.id.desc()))
         return list(result.scalars().all())
 
-    async def get_showdown_pending_games(self) -> List[Game]:
+    async def get_showdown_pending_games(self) -> list[Game]:
         """Returns games waiting for players to make cashout/continue decisions."""
         result = await self.session.execute(select(Game).where(Game.status == "showdown_pending").order_by(Game.id.desc()))
         return list(result.scalars().all())
 
-    async def get_showdown_active_games(self) -> List[Game]:
+    async def get_showdown_active_games(self) -> list[Game]:
         """Returns games in active showdown phase (ready for execute_showdown_flip)."""
         result = await self.session.execute(select(Game).where(Game.status == "showdown_active").order_by(Game.id.desc()))
         return list(result.scalars().all())
@@ -249,6 +311,7 @@ class GameService:
     async def get_game_status(self, game_id: int) -> str:
         game = await self._get_game_by_id(game_id, lock=False)
         return game.status
+
     async def get_game_player(self, game_id: int, user_id: int) -> GamePlayer:
         return await self._get_game_player(game_id, user_id)
 
@@ -259,6 +322,13 @@ class GameService:
         if game is None:
             raise ValueError("No open game available")
         return game
+
+    async def _refund(self, player: GamePlayer, game: Game, wallet: WalletService):
+        # Prefer paid_by_user_id (inviter); fall back to seat holder for legacy rows.
+        recipient_id = player.paid_by_user_id if player.paid_by_user_id is not None else player.user_id
+        await wallet.credit(recipient_id, Decimal("1.00"), TransactionType.REFUND)
+        await self.session.flush()
+        return True
 
     async def _cashout(self, player: GamePlayer,
                        game: Game, payout: Decimal,
@@ -273,13 +343,21 @@ class GameService:
         player.is_eliminated = True
         player.eliminated_at = datetime.now(timezone.utc)
 
+        # TODO(void-game): persist amount_won (and funds_locked_until) on GamePlayer
+        # before/with this credit so a later void can claw back exactly.
         await wallet.credit(player.user_id, payout)
         await leaderboard.increment_earnings(player.user_id, payout)
         await leaderboard.update_streak(player.user_id, player.round_number)
         await self.session.flush()
         return payout
 
-    async def _add_player_to_game(self, game: Game, user_id: int, side: Optional[str]) -> GamePlayer:
+    async def _add_player_to_game(
+        self,
+        game: Game,
+        user_id: int,
+        side: str | None,
+        paid_by_user_id: int | None = None,
+    ) -> GamePlayer:
         """Creates a GamePlayer record and updates game stats. Does not handle payment."""
         player = GamePlayer(
             game_id=game.id,
@@ -288,6 +366,7 @@ class GameService:
             round_number=1,
             is_eliminated=False,
             eliminated_at=None,
+            paid_by_user_id=paid_by_user_id if paid_by_user_id is not None else user_id,
         )
         self.session.add(player)
         game.prize_pool += Decimal("1.00")
@@ -306,13 +385,6 @@ class GameService:
 
         return game
 
-    async def get_open_game(self, lock: bool = False) -> Optional[Game]:
-        query = select(Game).where(Game.status == "open").order_by(Game.flip_time.asc())
-        if lock:
-            query = query.with_for_update()
-        result = await self.session.execute(query)
-        return result.scalars().first()
-
     async def _get_game_player(self, game_id: int, user_id: int) -> GamePlayer:
         result = await self.session.execute(select(GamePlayer)
                                              .where(GamePlayer.game_id == game_id,
@@ -324,7 +396,7 @@ class GameService:
 
         return player
 
-    async def _get_players_for_game(self, game_id: int) -> List[GamePlayer]:
+    async def _get_players_for_game(self, game_id: int) -> list[GamePlayer]:
         result = await self.session.execute(select(GamePlayer)
                                              .where(GamePlayer.game_id == game_id,
                                                     GamePlayer.is_eliminated.is_(False)))
@@ -332,7 +404,8 @@ class GameService:
 
     async def _set_game_state(self, game: Game, state: str) -> Game:
         """Utility to set game state with validation."""
-        if state not in ("open", "active", "showdown_pending", "showdown_active", "finished"):
+        # "canceled" is set directly in cancel_game today; include here if that path switches.
+        if state not in ("open", "active", "showdown_pending", "showdown_active", "finished", "canceled"):
             raise ValueError("Invalid game state")
         game.status = state
         await self.session.flush()

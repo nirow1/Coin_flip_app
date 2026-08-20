@@ -127,6 +127,8 @@ class WalletService:
             )
 
     async def withdraw_sol(self, user_id: int, amount_sol: Decimal, destination_address: str):
+        # TODO(void-game): enforce funds_locked_until / non-withdrawable winnings
+        # so a void clawback cannot race a Solana withdrawal.
         # 1. Debit internal balance first
         transaction = await self.debit(
             user_id=user_id,

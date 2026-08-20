@@ -38,6 +38,12 @@ class GamePlayer(Base):
     is_eliminated = Column(Boolean, default=False)
     eliminated_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Who was debited for this seat (self on join; inviter on invite_friend).
+    paid_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+
+    # TODO(void-game): amount_won — cashout/win credited so void can claw back exactly.
+    # TODO(void-game): optional funds_locked_until if winnings enter a withdrawal lock.
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (

@@ -10,6 +10,8 @@ class Wallet(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     balance = Column(Numeric(12, 2), default=0, nullable=False)
+    # TODO(void-game): locked_balance or rely on GamePlayer.funds_locked_until when
+    # voiding showdown/finished games after cashouts.
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="wallet")

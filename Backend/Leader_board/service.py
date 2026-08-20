@@ -27,12 +27,17 @@ class LeaderBoardService:
         leaderboard_entry.total_earnings += amount
         await self.session.flush()
 
+    # TODO(void-game): decrement_earnings(user_id, amount) for clawback when a
+    # showdown/finished game is voided after cashouts.
+
     async def update_streak(self, user_id: int, new_streak: int) -> None:
         leaderboard_entry = await self._get_leaderboard(user_id)
 
         if leaderboard_entry is None:
             leaderboard_entry = await self._create_leaderboard(user_id)
 
+        # TODO(void-game): voiding a game cannot safely shrink longest_streak without
+        # a per-game streak history (current value is max-only).
         if leaderboard_entry.longest_streak < new_streak:
             leaderboard_entry.longest_streak = new_streak
         await self.session.flush()
