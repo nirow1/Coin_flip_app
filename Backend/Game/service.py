@@ -49,7 +49,7 @@ class GameService:
 
         game = await self._get_game_by_id(game_id, lock=False)
 
-        if game.status in ("showdown_pending", "finished"):
+        if game.status in ("showdown_pending", "finished", "canceled"):
             raise ValueError("Cannot choose side in this game state")
 
         player = await self._get_game_player(game_id, user_id)
@@ -60,7 +60,6 @@ class GameService:
         if player.side is not None:
             raise ValueError("Player has already chosen side")
 
-        previous_side = player.side
         player.side = side
         await self.session.flush()
 
@@ -226,32 +225,40 @@ class GameService:
         await self.session.flush()
         return new_game
 
-    def next_daily_flip_time(self, now: datetime | None = None) -> datetime:
-        now = now or datetime.now(timezone.utc)
-        candidate = now.replace(hour=19, minute=0, second=0, microsecond=0)
-        if now >= candidate:
-            candidate += timedelta(days=1)
-        return candidate
-
-    async def ensure_open_game(self, wallet: WalletService) -> Game | None:
+    async def ensure_open_game(self, wallet: WalletService) -> Game:
+        """Cancel stale open games, then ensure exactly one future open game exists."""
         await self.cancel_stale_open_games(wallet)
 
         game = await self.get_open_game()
-
         if game is None:
             return await self.create_game(self.next_daily_flip_time())
-
         return game
 
-    async def cancel_stale_open_games(self, wallet: WalletService):
-        # 1m grace after flip_time so the 19:00 flip path can finish before refunds.
-        games = await self.get_open_games()
-        for game in games:
-            if game.flip_time < datetime.now(timezone.utc) - timedelta(minutes=1):
-                await self.cancel_game(game.id, wallet)
+    async def cancel_stale_open_games(self, wallet: WalletService) -> None:
+        """Refund and cancel open games whose flip_time is past (missed flip / downtime).
 
-    async def cancel_game(self, game_id: int, wallet: WalletService):
+        Uses a 1-minute grace after flip_time so the 19:00 flip path can complete
+        before recovery treats the game as missed.
+        """
+        now = datetime.now(timezone.utc)
+        games = await self.get_open_games(lock=True)
+        for game in games:
+            flip_time = self._as_utc(game.flip_time)
+            if flip_time < now - timedelta(minutes=1):
+                try:
+                    await self.cancel_game(game.id, wallet)
+                except Exception as e:
+                    # Leave status open so a later tick can retry; do not mark canceled.
+                    print(f"Error canceling stale open game {game.id}: {e}")
+
+    async def cancel_game(self, game_id: int, wallet: WalletService) -> Game:
         """Cancel an open/active game and refund each seat's join fee.
+
+        Status becomes ``canceled`` (not ``finished``) so analytics and UX can tell a
+        missed-flip / admin void apart from a natural winner payout.
+
+        Refunds go to GamePlayer.paid_by_user_id when set (inviter on invite_friend),
+        otherwise to the seat holder — so the payer who was debited gets the money back.
 
         TODO(void-game): showdown_pending / showdown_active / finished need a separate
         void path — claw back amount_won, reverse leaderboard earnings, honour
@@ -265,12 +272,10 @@ class GameService:
         # House absorbs the 2% edge if the game had already flipped (prize_pool *= 0.98).
         players = await self.get_all_players(game_id)
         for player in players:
-            await self._refund(player, game, wallet)
+            await self._refund(player, wallet)
 
         game.prize_pool = Decimal(0)
-        game.status = "canceled"
-        await self.session.flush()
-        return game
+        return await self._set_game_state(game, "canceled")
 
     # ─── Queries ──────────────────────────────────────────────────
     async def get_all_games(self) -> list[Game]:
@@ -288,10 +293,11 @@ class GameService:
         result = await self.session.execute(query)
         return result.scalars().first()
 
-    async def get_open_games(self) -> list[Game]:
-        result = await self.session.execute(
-            select(Game).where(Game.status == "open").order_by(Game.flip_time.asc())
-        )
+    async def get_open_games(self, lock: bool = False) -> list[Game]:
+        query = select(Game).where(Game.status == "open").order_by(Game.flip_time.asc())
+        if lock:
+            query = query.with_for_update()
+        result = await self.session.execute(query)
         return list(result.scalars().all())
 
     async def get_active_games(self) -> list[Game]:
@@ -323,12 +329,11 @@ class GameService:
             raise ValueError("No open game available")
         return game
 
-    async def _refund(self, player: GamePlayer, game: Game, wallet: WalletService):
-        # Prefer paid_by_user_id (inviter); fall back to seat holder for legacy rows.
+    async def _refund(self, player: GamePlayer, wallet: WalletService) -> None:
+        # Prefer paid_by_user_id (inviter who was debited); fall back to seat holder for legacy rows.
         recipient_id = player.paid_by_user_id if player.paid_by_user_id is not None else player.user_id
         await wallet.credit(recipient_id, Decimal("1.00"), TransactionType.REFUND)
         await self.session.flush()
-        return True
 
     async def _cashout(self, player: GamePlayer,
                        game: Game, payout: Decimal,
@@ -404,7 +409,6 @@ class GameService:
 
     async def _set_game_state(self, game: Game, state: str) -> Game:
         """Utility to set game state with validation."""
-        # "canceled" is set directly in cancel_game today; include here if that path switches.
         if state not in ("open", "active", "showdown_pending", "showdown_active", "finished", "canceled"):
             raise ValueError("Invalid game state")
         game.status = state
@@ -420,6 +424,25 @@ class GameService:
         return existing.scalar_one_or_none() is not None
 
     # ─── Static Utilities ─────────────────────────────────────────
+    @staticmethod
+    def next_daily_flip_time(now: datetime | None = None) -> datetime:
+        """Next daily flip at 19:00 UTC (today if still before 19:00, else tomorrow)."""
+        now = now or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        else:
+            now = now.astimezone(timezone.utc)
+        candidate = now.replace(hour=19, minute=0, second=0, microsecond=0)
+        if now >= candidate:
+            candidate += timedelta(days=1)
+        return candidate
+
+    @staticmethod
+    def _as_utc(dt: datetime) -> datetime:
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
     @staticmethod
     def _apply_eliminations(players: list[GamePlayer], winning_side: str) -> tuple[list[GamePlayer], list[GamePlayer]]:
         """Marks losing players as eliminated. Returns (survivors, eliminated)."""
@@ -440,7 +463,8 @@ class GameService:
         """Raises if joining is disabled within 5 minutes of the flip."""
         if game.flip_time is not None:
             now = datetime.now(timezone.utc)
-            lockout_start = game.flip_time - timedelta(minutes=5)
+            flip_time = GameService._as_utc(game.flip_time)
+            lockout_start = flip_time - timedelta(minutes=5)
             if now >= lockout_start:
                 raise ValueError("Joining is disabled 5 minutes before the flip")
 

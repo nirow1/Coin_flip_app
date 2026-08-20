@@ -5,9 +5,19 @@ from Backend.Tests.Game_engine.conftest import make_engine_with_mocks, async_ite
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
+def _patch_showdown(mock_service, mock_wallet, mock_leaderboard):
+    return (
+        patch("Backend.Game.engine.GameService", return_value=mock_service),
+        patch("Backend.Game.engine.WalletService", return_value=mock_wallet),
+        patch("Backend.Game.engine.LeaderBoardService", return_value=mock_leaderboard),
+    )
+
+
 async def test_showdown_scheduler_processes_expired_key():
     engine, mock_session, _ = make_engine_with_mocks()
     mock_service = AsyncMock()
+    mock_wallet = AsyncMock()
+    mock_leaderboard = AsyncMock()
 
     messages = [
         {"type": "pmessage", "data": "showdown_flip:5:2"},
@@ -15,17 +25,20 @@ async def test_showdown_scheduler_processes_expired_key():
     ]
     engine.pubsub.listen = MagicMock(return_value=async_iter(messages))
 
-    with patch("Backend.Game.engine.GameService", return_value=mock_service):
+    patches = _patch_showdown(mock_service, mock_wallet, mock_leaderboard)
+    with patches[0], patches[1], patches[2]:
         await engine.showdown_scheduler()
 
     mock_service.execute_showdown_flip.assert_awaited_once_with(
-        5, engine.wallet_service, engine.leaderboard_service, engine.redis_client
+        5, mock_wallet, mock_leaderboard, engine.redis_client
     )
 
 
 async def test_showdown_scheduler_ignore_malformed_key():
     engine, mock_session, _ = make_engine_with_mocks()
     mock_service = AsyncMock()
+    mock_wallet = AsyncMock()
+    mock_leaderboard = AsyncMock()
 
     messages = [
         {"type": "pmessage", "data": "showdown:5:2"},  # wrong prefix → skip
@@ -33,15 +46,18 @@ async def test_showdown_scheduler_ignore_malformed_key():
     ]
     engine.pubsub.listen = MagicMock(return_value=async_iter(messages))
 
-    with patch("Backend.Game.engine.GameService", return_value=mock_service):
+    patches = _patch_showdown(mock_service, mock_wallet, mock_leaderboard)
+    with patches[0], patches[1], patches[2]:
         await engine.showdown_scheduler()
 
-    assert mock_service.execute_showdown_flip.await_count == 0  # ← fixed from execute_flip
+    assert mock_service.execute_showdown_flip.await_count == 0
 
 
 async def test_showdown_scheduler_ignores_non_pmessage():
     engine, mock_session, _ = make_engine_with_mocks()
     mock_service = AsyncMock()
+    mock_wallet = AsyncMock()
+    mock_leaderboard = AsyncMock()
 
     messages = [
         {"type": "subscribe", "data": "showdown_flip:5:2"},
@@ -49,7 +65,8 @@ async def test_showdown_scheduler_ignores_non_pmessage():
     ]
     engine.pubsub.listen = MagicMock(return_value=async_iter(messages))
 
-    with patch("Backend.Game.engine.GameService", return_value=mock_service):
+    patches = _patch_showdown(mock_service, mock_wallet, mock_leaderboard)
+    with patches[0], patches[1], patches[2]:
         await engine.showdown_scheduler()
 
     assert mock_service.execute_showdown_flip.await_count == 0
@@ -58,6 +75,8 @@ async def test_showdown_scheduler_ignores_non_pmessage():
 async def test_showdown_scheduler_error_does_not_crash():
     engine, mock_session, _ = make_engine_with_mocks()
     mock_service = AsyncMock()
+    mock_wallet = AsyncMock()
+    mock_leaderboard = AsyncMock()
     mock_service.execute_showdown_flip.side_effect = Exception("DB error")
 
     messages = [
@@ -67,7 +86,8 @@ async def test_showdown_scheduler_error_does_not_crash():
     ]
     engine.pubsub.listen = MagicMock(return_value=async_iter(messages))
 
-    with patch("Backend.Game.engine.GameService", return_value=mock_service):
+    patches = _patch_showdown(mock_service, mock_wallet, mock_leaderboard)
+    with patches[0], patches[1], patches[2]:
         await engine.showdown_scheduler()  # must not raise
 
     assert mock_service.execute_showdown_flip.await_count == 2

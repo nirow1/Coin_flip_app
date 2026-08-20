@@ -17,8 +17,6 @@ def make_engine_with_mocks():
     mock_async_session = MagicMock(return_value=mock_session)
     engine = GameEngine(
         async_session=mock_async_session,
-        wallet_service=AsyncMock(),
-        leaderboard=AsyncMock(),
         redis=AsyncMock(),
         pubsub=AsyncMock(),
     )

@@ -52,7 +52,8 @@ class GamePlayer(Base):
 
     # Relationships
     game = relationship("Game", back_populates="players")
-    user = relationship("User")
+    user = relationship("User", foreign_keys=[user_id])
+    paid_by_user = relationship("User", foreign_keys=[paid_by_user_id])
 
 class Flip(Base):
     __tablename__ = "flips"
