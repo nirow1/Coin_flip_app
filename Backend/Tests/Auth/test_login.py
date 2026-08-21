@@ -17,8 +17,9 @@ async def test_login_user(client):
     })
     assert response.status_code == 200
     data = response.json()
-    assert "access_token" in data
-    assert data["token_type"] == "bearer"
+    assert data == {"ok": True}
+    assert "access_token" not in data
+    assert "access_token" in response.cookies
 
 @pytest.mark.asyncio
 async def test_login_wrong_password(client):

@@ -2,7 +2,7 @@ import random
 import jwt
 from fastapi.security import OAuth2PasswordBearer
 
-from Backend.Auth.schemas import RegisterRequest, LoginRequest, UserResponse, TokenResponse
+from Backend.Auth.schemas import RegisterRequest, LoginRequest, UserResponse
 from Backend.Core.security import hash_password, verify_password, create_access_token
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -60,7 +60,7 @@ class AuthService:
         )
 
     @staticmethod
-    async def login_user(data: LoginRequest, session) -> TokenResponse:
+    async def login_user(data: LoginRequest, session) -> str:
         # Find user
         result = await session.execute(select(User).where(User.email == data.email))
         user = result.scalar_one_or_none()
@@ -74,10 +74,11 @@ class AuthService:
         if not verify_password(data.password, user.password_hash):
             raise ValueError("Invalid email or password")
 
-        # Create JWT with user ID
-        token = create_access_token({"sub": str(user.id)})
-
-        return TokenResponse(access_token=token)
+        # JWT is set as HttpOnly cookie by the router — never returned in JSON
+        return create_access_token(
+            {"sub": str(user.id)},
+            expires_minutes=settings.JWT_EXPIRE_MINUTES,
+        )
 
     @staticmethod
     async def get_current_user(token: str, session) -> User:
