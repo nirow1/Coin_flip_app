@@ -1,7 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App/App.tsx";
 import Login from "./App/views/LoginView.tsx";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { GameProvider } from "./Context/GameContext.tsx";
 import { AuthProvider } from "./Context/AuthContext.tsx";
 import Register from "./App/views/RegisterView.tsx";
@@ -12,9 +12,10 @@ createRoot(document.getElementById("root")!).render(
     <AuthProvider>
       <GameProvider>
           <Routes>
-            <Route path="/" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/app" element={<App />} />
+          <Route path="/" element={<Navigate to="/login" replace />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/app" element={<App />} />
           </Routes>
       </GameProvider>
     </AuthProvider>

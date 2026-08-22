@@ -26,14 +26,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const res = await apiLogin(email, password);
       
-      const { access_token } = res.data;
-      
-      localStorage.setItem('token', access_token);
-      setToken(access_token);
-      
-      const payload = JSON.parse(atob(access_token.split('.')[1]));
-      
-      setUser({ email: payload.sub });
+      if (res.data.ok) {
+        setUser({ email });
+      }
     } catch (err: any) {
       console.error("Login failed:", err);
     } finally {
@@ -46,26 +41,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   try {
     const res = await apiRegister(data);
-
-    // Backend succeeded → extract token
-    const { access_token } = res.data;
-
-    if (!access_token) {
-      console.error("Register succeeded but no token returned");
-      return false;
-    }
-
-    localStorage.setItem("token", access_token);
-    setToken(access_token);
-
-    return true;
+    return res != null;
 
   } catch (err) {
     console.error("Register failed:", err);
-
-    // Clear stale token
-    localStorage.removeItem("token");
-    setToken(null);
 
     return false;
 
@@ -75,8 +54,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 };
 
   const logout = () => {
-    localStorage.removeItem('token');
-    setToken(null);
     setUser(null);
   };
   

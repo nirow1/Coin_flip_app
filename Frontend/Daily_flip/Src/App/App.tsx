@@ -15,8 +15,8 @@ import FriendsPage from './views/FriendsView';
 export default function App() {
   const auth = useContext(AuthContext);
   
-  if (!auth?.token) {
-    return <Navigate to="/" replace />;
+  if (!auth?.user?.email) {
+    return <Navigate to="/login" replace />;
   }
   
   const [activeItem, setActiveItem] = useState('main');

@@ -25,7 +25,7 @@ export default function Register() {
     const ok = await auth?.register(registerData);
 
     if (ok) {
-      navigate("/app");
+      navigate("/login");
     }
   };
 
@@ -249,7 +249,7 @@ export default function Register() {
         {/* Sign in */}
         <p className="text-center text-sm text-gray-500">
           Already have an account?{" "}
-          <a href="/" className="text-gray-900 font-medium hover:underline">
+          <a href="/login" className="text-gray-900 font-medium hover:underline">
             Sign in
           </a>
         </p>

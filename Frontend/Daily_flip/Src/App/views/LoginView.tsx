@@ -13,10 +13,10 @@ export default function Login() {
 
 
   useEffect(() => {
-    if (auth?.token) {
+    if (auth?.user) {
       navigate("/app");
     }
-  }, [auth?.token]);
+  }, [auth?.user]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

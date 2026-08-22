@@ -1,21 +1,23 @@
 import random
-import jwt
-from fastapi.security import OAuth2PasswordBearer
-
-from Backend.Auth.schemas import RegisterRequest, LoginRequest, UserResponse
-from Backend.Core.security import hash_password, verify_password, create_access_token
-from fastapi import HTTPException, status
-from sqlalchemy import select
-from Backend.Auth.models import User
-from Backend.config import settings
-from Backend.Wallet.services import WalletService
-from jwt import PyJWTError
 from datetime import date
+
+import jwt
+from fastapi import HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from jwt import PyJWTError
+from sqlalchemy import select
+
+from Backend.Auth.models import User
+from Backend.Auth.schemas import LoginRequest, RegisterRequest, UserResponse
+from Backend.config import settings
+from Backend.Core.security import create_access_token, hash_password, verify_password
+from Backend.Wallet.services import WalletService
+
 
 class AuthService:
     oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
-    # todo: add email verification, real KYC with name and surname, 
+    # todo: photo of face which is verified for age with AI
     @staticmethod
     async def register_user(data: RegisterRequest, session):
         # Validate age (must be 18+)
