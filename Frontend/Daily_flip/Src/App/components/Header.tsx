@@ -1,16 +1,18 @@
 import { useContext, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { AuthContext } from "../../Context/AuthContext";
 
 export default function Header() {
   const [isLogoutShining, setIsLogoutShining] = useState(false);
   const { logout } = useContext(AuthContext);
+  const navigate = useNavigate();
 
-
-  const handleLogoutClick = () => {    
+  const handleLogoutClick = async () => {
     setIsLogoutShining(true);
     setTimeout(() => setIsLogoutShining(false), 600);
-    logout();
+    await logout();
+    navigate('/login', { replace: true });
   };
 
   return (

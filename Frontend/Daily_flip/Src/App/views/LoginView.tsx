@@ -16,12 +16,15 @@ export default function Login() {
     if (auth?.user) {
       navigate("/app");
     }
-  }, [auth?.user]);
+  }, [auth?.user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (auth?.isLoading) return;
     await auth?.login(email, password);
   };
+
+  if (auth?.isInitializing) return null;
 
   return (
     <div
@@ -103,9 +106,10 @@ export default function Login() {
           {/* Submit */}
           <button
             type="submit"
-            className="mt-1 w-full py-2.5 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 active:bg-gray-800 transition"
+            disabled={auth?.isLoading}
+            className="mt-1 w-full py-2.5 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 active:bg-gray-800 transition disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            Sign in
+            {auth?.isLoading ? "Signing in…" : "Sign in"}
           </button>
         </form>
 

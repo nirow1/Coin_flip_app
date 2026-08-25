@@ -2,6 +2,7 @@ from fastapi import Cookie, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from Backend.Auth.models import User
+from Backend.Auth.service import AuthService
 from Backend.db import get_session
 
 
@@ -12,10 +13,10 @@ async def get_current_user(
     if access_token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
+            detail="Not authenticated",
         )
 
-    return access_token
+    return await AuthService.get_current_user(access_token, session)
 
 async def get_current_admin(user: User = Depends(get_current_user)):
     if not user.is_admin:

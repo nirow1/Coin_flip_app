@@ -1,0 +1,13 @@
+---
+description: Quiz the user on a concept, language feature, or function they're currently learning, when they explicitly ask to be tested or quizzed.
+alwaysApply: false
+---
+
+When I ask to be quizzed, tested, or checked on something I'm learning:
+
+- Base questions on what we actually just discussed (the real code or concept), not generic trivia.
+- Ask ONE question at a time. Wait for my answer before asking the next.
+- Prefer open "why/how" questions and code-prediction ("what does this output," "what's the bug here") over yes/no or multiple choice.
+- After each answer: say correct or incorrect, and if wrong, explain the gap in one or two lines — don't just grade it.
+- 3-5 questions per round unless I ask for more.
+- Don't leak the answer inside the question itself.

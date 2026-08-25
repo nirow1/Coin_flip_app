@@ -19,17 +19,17 @@ interface GameContextType {
 export const GameContext = createContext<GameContextType>({} as GameContextType);
 
 export function GameProvider({ children }: { children: ReactNode }) {
-  const { token } = useContext(AuthContext);
   const [balance, setBalance] = useState<number | null>(null);
   const [liveGame, setLiveGame] = useState<GameResponse | null>(null);
   const [joining, setJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [hasJoined, setHasJoined] = useState(false);
   const [currentGames, setCurrentGames] = useState<GameResponse[]>([]);
+  const { user, isInitializing } = useContext(AuthContext);
 
   const refreshBalance = async () => {
     try {
-      if (!token) {
+      if (!user) {
         setBalance(null);
         return;
       }
@@ -51,7 +51,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   };
 
   const joinGame = async (side: "heads" | "tails") => {
-    if (!token) {
+    if (!user) {
       setJoinError("You must be logged in to join a game");
       return;
     }
@@ -90,7 +90,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
         setLiveGame(null);
       }
 
-      if (!token) {
+      if (isInitializing) return;
+
+      if (!user) {
         setBalance(null);
         setCurrentGames([]);
         setHasJoined(false);
@@ -111,7 +113,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     };
 
     load();
-  }, [token]);
+  }, [user, isInitializing]);
 
   return (
     <GameContext.Provider

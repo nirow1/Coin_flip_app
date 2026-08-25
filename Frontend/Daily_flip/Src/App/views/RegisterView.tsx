@@ -21,6 +21,7 @@ export default function Register() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (auth?.isLoading) return;
     const registerData: RegisterData = { email, password, country, dob, username };
     const ok = await auth?.register(registerData);
 
@@ -233,9 +234,10 @@ export default function Register() {
           {/* Submit */}
           <button
             type="submit"
-            className="mt-1 w-full py-2.5 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 active:bg-gray-800 transition"
+            disabled={auth?.isLoading}
+            className="mt-1 w-full py-2.5 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 active:bg-gray-800 transition disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            Register
+            {auth?.isLoading ? "Registering…" : "Register"}
           </button>
         </form>
 

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
 
+from Backend.Auth.dependencies import get_current_user
 from Backend.Auth.models import User
 from Backend.Auth.schemas import LoginRequest, RegisterRequest, UserResponse
 from Backend.Auth.service import AuthService
@@ -48,7 +49,7 @@ async def login(
     return {"ok": True}
 
 @router.get("/me")
-async def get_me(user: User = Depends(AuthService.get_current_user)):
+async def get_me(user: User = Depends(get_current_user)):
      return UserResponse(
         id=user.id,
         email=user.email,
@@ -58,5 +59,10 @@ async def get_me(user: User = Depends(AuthService.get_current_user)):
 
 @router.post("/logout")
 async def logout(response: Response):
-    response.delete_cookie("access_token", path="/")
+    response.delete_cookie(
+        key="access_token",
+        path="/",
+        samesite="lax",
+        secure=_cookie_secure(),
+    )
     return {"ok": True}
