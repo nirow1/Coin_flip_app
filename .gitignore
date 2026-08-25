@@ -67,6 +67,7 @@ pnpm-debug.log*
 *.tar.gz
 *.rar
 *.txt
+!Backend/requirements.txt
 *.pdf
 *.csv
 
