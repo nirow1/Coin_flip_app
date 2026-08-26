@@ -6,7 +6,7 @@ from solders.system_program import transfer, TransferParams
 from solana.rpc.async_api import AsyncClient
 from solders.transaction import Transaction
 from solders.signature import Signature
-from solana.rpc.types import TxOpts
+from solana.rpc.models import TxOpts
 
 
 async def solana_send_transaction(destination_address: str, amount_sol: Decimal, rpc_url: str) -> str:

@@ -13,8 +13,12 @@ async def create_redis_client() -> Redis:
     )
 
     # Enable keyspace notifications for expired events.
-    # K = Keyspace events, x = expired events
-    await client.config_set("notify-keyspace-events", "Kx")
+    # K = Keyspace events, x = expired events.
+    # Managed Redis (e.g. Railway) may disallow CONFIG SET — don't block boot.
+    try:
+        await client.config_set("notify-keyspace-events", "Kx")
+    except Exception:
+        pass
 
     return client
 
