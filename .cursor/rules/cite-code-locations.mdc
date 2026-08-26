@@ -24,7 +24,7 @@ Prefer Cursor code citations:
 
 **Promise.all treats missing open game as total failure**
 
-```87:99:Frontend/Daily_flip/Src/Context/GameContext.tsx
+```87:99:Frontend/src/Context/GameContext.tsx
 const [openRes, currentRes] = await Promise.all([
   getOpenGame(),
   getCurrentGames(),

@@ -10,7 +10,7 @@ Daily Flip is a coin-flip game: FastAPI backend + React (Vite) frontend.
 ## Layout
 
 - `Backend/` — FastAPI API (`main.py` mounts routers)
-- `Frontend/Daily_flip/` — React app (`Src/App`, `Src/Api`, `Src/Context`)
+- `Frontend/` — React (Vite) app (`src/App`, `src/Api`, `src/Context`)
 - `Backend/Tests/` — pytest suites mirrored by domain
 - `Scripts/` — utilities (e.g. seed)
 
@@ -27,9 +27,9 @@ Typical layering per domain: `router.py` → `service.py` → models/schemas. Sh
 
 ## Frontend
 
-- `Src/Api/` — Axios client + thin endpoint wrappers (`game.ts`, `wallet.ts`, …)
-- `Src/Context/` — Auth + game state (`AuthContext`, `GameContext`)
-- `Src/App/views/` — Screens (`MainView`, `WalletView`, …)
-- `Src/App/components/` — UI (e.g. `CoinFlip.tsx`)
+- `src/Api/` — Axios client + thin endpoint wrappers (`game.ts`, `wallet.ts`, …)
+- `src/Context/` — Auth + game state (`AuthContext`, `GameContext`)
+- `src/App/views/` — Screens (`MainView`, `WalletView`, …)
+- `src/App/components/` — UI (e.g. `CoinFlip.tsx`)
 
 Game HTTP surface used by the client today: `GET /game/open`, `GET /game/current`, `POST /game/join?side=`.
