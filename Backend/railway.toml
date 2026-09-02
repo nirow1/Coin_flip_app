@@ -4,7 +4,7 @@ dockerfilePath = "Dockerfile"
 
 [deploy]
 # Must wrap in a shell: Dockerfile start overrides run in exec form, so bare $PORT is not expanded.
-startCommand = "/bin/sh -c \"uvicorn Backend.main:app --host 0.0.0.0 --port ${PORT:-8000}\""
+startCommand = "/bin/sh -c \"cd /app/Backend && alembic upgrade head && uvicorn Backend.main:app --host 0.0.0.0 --port ${PORT:-8000}\""
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"
