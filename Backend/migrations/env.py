@@ -4,16 +4,21 @@ from pathlib import Path
 # Add project root to sys.path
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from logging.config import fileConfig
 import asyncio
-
-from sqlalchemy.ext.asyncio import async_engine_from_config
-from sqlalchemy import pool
+from logging.config import fileConfig
 
 from alembic import context
+from sqlalchemy import pool
+from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from Backend.db import Base
+import Backend.Auth.models
+import Backend.Game.models
+import Backend.Leader_board.model
+import Backend.Notification.models
+import Backend.Social.models
+import Backend.Wallet.models  # noqa: F401
 from Backend.config import settings
+from Backend.db import Base
 
 # Import all models so they register with Base.metadata.
 # Without these imports, Python never executes the class definitions
