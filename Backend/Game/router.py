@@ -1,14 +1,15 @@
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
-from Backend.Auth.dependencies import get_current_user, get_current_admin
-from Backend.Core.core_redis import get_redis
-from Backend.Wallet.services import WalletService
-from fastapi import APIRouter, Depends, HTTPException, status
-from Backend.Game.service import GameService
-from Backend.Game.schemas import GameResponse, GamePlayerResponse
+
+from Backend.Auth.dependencies import get_current_admin, get_current_user
 from Backend.Auth.models import User
+from Backend.Core.core_redis import get_redis
 from Backend.db import get_session
-from typing import List
+from Backend.Game.schemas import GamePlayerResponse, GameResponse, MyGameItemResponse
+from Backend.Game.service import GameService
+from Backend.Wallet.services import WalletService
 
 router = APIRouter()
 
@@ -52,11 +53,35 @@ async def cashout_decision(decision: str, game_id: int, user: User = Depends(get
     return {"message": "Cashout decision recorded successfully"}
 
 
-@router.get("/current", response_model=List[GameResponse])
+@router.get("/current", response_model=list[GameResponse])
 async def get_current_games(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     game_service = GameService(session)
     games = await game_service.get_players_active_games(user.id)
     return [GameResponse.model_validate(g) for g in games]
+
+
+@router.get("/mine", response_model=list[MyGameItemResponse])
+async def get_my_games(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session), redis_client: Redis = Depends(get_redis)):
+    game_service = GameService(session)
+    
+    games = await game_service.get_players_games(user.id, redis_client)
+    return games
+
+
+@router.get("/admin/games")
+async def get_all_games(user: User = Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
+    game_service = GameService(session)
+    games = await game_service.get_all_games()
+    return [GameResponse.model_validate(g) for g in games]
+
+
+@router.get("/open", response_model=GameResponse)
+async def get_open_game(session: AsyncSession = Depends(get_session)):
+    game_service = GameService(session)
+    game = await game_service.get_open_game()
+    if game is None:
+        raise HTTPException(status_code=404, detail="No open game available")
+    return GameResponse.model_validate(game)
 
 
 @router.get("/{game_id}/state")
@@ -77,18 +102,3 @@ async def get_game_player(game_id: int, user: User = Depends(get_current_user), 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     return GamePlayerResponse.model_validate(player)
-
-
-@router.get("/admin/games")
-async def get_all_games(user: User = Depends(get_current_admin), session: AsyncSession = Depends(get_session)):
-    game_service = GameService(session)
-    games = await game_service.get_all_games()
-    return [GameResponse.model_validate(g) for g in games]
-
-@router.get("/open", response_model=GameResponse)
-async def get_open_game(session: AsyncSession = Depends(get_session)):
-    game_service = GameService(session)
-    game = await game_service.get_open_game()
-    if game is None:
-        raise HTTPException(status_code=404, detail="No open game available")
-    return GameResponse.model_validate(game)

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from Backend.Game.models import Game, GamePlayer
+from Backend.Game.schemas import MyGameItemResponse
 from Backend.Leader_board.service import LeaderBoardService
 from Backend.Wallet.enums import TransactionType
 from Backend.Wallet.services import WalletService
@@ -73,6 +74,43 @@ class GameService:
                                                     Game.status.in_(["open", "active", "showdown_pending", "showdown_active"]),
                                                     GamePlayer.is_eliminated.is_(False)))
         return list(result.scalars().all())
+
+    async def get_players_games(self, user_id: int, redis_client: Redis) -> list[MyGameItemResponse]:
+        result = await self.session.execute(
+            select(Game, GamePlayer)
+            .join(GamePlayer, Game.id == GamePlayer.game_id)
+            .where(GamePlayer.user_id == user_id)
+            .order_by(Game.id.desc())
+        )
+
+        game_responses = []
+        for game, player in result.all():
+            outcome = self._player_game_outcome(game, player)
+            heads = tails = None
+            if outcome == "live":
+                percentages = await self.get_percentages(game.id, player.round_number, redis_client)
+                heads = percentages["heads"]
+                tails = percentages["tails"]
+
+            game_responses.append(
+                MyGameItemResponse(
+                    id=game.id,
+                    status=game.status,
+                    start_date=game.start_date,
+                    flip_time=game.flip_time,
+                    prize_pool=game.prize_pool,
+                    current_player_count=game.current_player_count,
+                    initial_player_count=game.initial_player_count,
+                    side=player.side,
+                    cashout_decision=player.cashout_decision,
+                    round_number=player.round_number,
+                    is_eliminated=player.is_eliminated,
+                    outcome=outcome,
+                    heads=heads,
+                    tails=tails,
+                )
+            )
+        return game_responses
 
     async def execute_flip(self, game_id: int,wallet: WalletService, leaderboard: LeaderBoardService) -> Game:
         game = await self._get_game_by_id(game_id)
@@ -345,6 +383,9 @@ class GameService:
         if game.status not in ("showdown_pending", "finished"):
             raise ValueError("Cannot cash out in this game state")
 
+        if player.cashout_decision is None:
+            player.cashout_decision = "cashout"
+
         player.is_eliminated = True
         player.eliminated_at = datetime.now(timezone.utc)
 
@@ -424,6 +465,18 @@ class GameService:
         return existing.scalar_one_or_none() is not None
 
     # ─── Static Utilities ─────────────────────────────────────────
+    @staticmethod
+    def _player_game_outcome(game: Game, player: GamePlayer) -> str:
+        if player.cashout_decision == "cashout":
+            return "won"
+        if not player.is_eliminated and game.status in (
+            "open", "active", "showdown_pending", "showdown_active",
+        ):
+            return "live"
+        if player.is_eliminated:
+            return "eliminated"
+        return "ended"
+
     @staticmethod
     def next_daily_flip_time(now: datetime | None = None) -> datetime:
         """Next daily flip at 19:00 UTC (today if still before 19:00, else tomorrow)."""
