@@ -1,4 +1,49 @@
+import { useEffect, useState } from 'react';
+import { getMyGames, type MyGameItemResponse } from '../../Api/game';
+
+const statusStyle: Record<string, string> = {
+  live: 'bg-green-100 text-green-700',
+  ended: 'bg-gray-100 text-gray-500',
+  won: 'bg-[#fff7d6] text-[#7a4f00]',
+  eliminated: 'bg-red-50 text-red-500',
+};
+
+function outcomeLabel(game: MyGameItemResponse): string {
+  if (game.outcome === 'eliminated') {
+    return `Eliminated in round: ${game.round_number}`;
+  }
+  if (game.outcome === 'live') return 'Live';
+  if (game.outcome === 'won') return 'Won';
+  return 'Ended';
+}
+
 export default function MyGames() {
+  const [games, setGames] = useState<MyGameItemResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await getMyGames();
+        if (!cancelled) setGames(res.data);
+      } catch {
+        if (!cancelled) setError('Failed to load games');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="p-6 text-gray-900">
       <h2 className="text-3xl text-[#efbf04] mb-5 font-[Alexandria]">My Games</h2>
@@ -49,17 +94,3 @@ export default function MyGames() {
     </div>
   );
 }
-
-const myGamesData = [
-  { id: 'GF-2841', prizePool: '12,400', heads: 62, tails: 38, status: 'Live', img: 'https://images.unsplash.com/photo-1624365169106-1f1f4cd65c91?w=160&h=100&fit=crop' },
-  { id: 'GF-2799', prizePool: '5,200', heads: 45, tails: 55, status: 'Ended', img: 'https://images.unsplash.com/photo-1624365168012-7ed139887755?w=160&h=100&fit=crop' },
-  { id: 'GF-2755', prizePool: '8,900', heads: 50, tails: 50, status: 'Won', img: 'https://images.unsplash.com/photo-1589180176337-503fed4bcfe0?w=160&h=100&fit=crop' },
-  { id: 'GF-2710', prizePool: '3,100', heads: 33, tails: 67, status: 'Lost', img: 'https://images.unsplash.com/photo-1624365169106-1f1f4cd65c91?w=160&h=100&fit=crop' },
-];
-
-const statusStyle: Record<string, string> = {
-  Live: 'bg-green-100 text-green-700',
-  Ended: 'bg-gray-100 text-gray-500',
-  Won: 'bg-[#fff7d6] text-[#7a4f00]',
-  Lost: 'bg-red-50 text-red-500',
-};

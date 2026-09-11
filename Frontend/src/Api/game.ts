@@ -25,6 +25,25 @@ export interface JoinGameResponse {
   game: GameResponse;
 }
 
+export interface MyGameItemResponse {
+  id: number;
+  status: string;
+  start_date: string;
+  flip_time: string;
+  prize_pool: number;
+  current_player_count: number;
+  initial_player_count: number | null;
+  side: string | null;
+  cashout_decision: string | null;
+  round_number: number;
+  is_eliminated: boolean;
+  outcome: 'live' | 'won' | 'eliminated' | 'ended';
+  heads: number | null;
+  tails: number | null;
+}
+
+export const getMyGames = () => client.get<MyGameItemResponse[]>('/game/mine');
+
 export const getOpenGame = () => client.get<GameResponse>('/game/open');
 
 export const joinGame = (side: 'heads' | 'tails') =>

@@ -13,6 +13,7 @@ from Backend.Wallet.services import WalletService
 import fakeredis.aioredis as fakeredis
 from Backend.config import settings
 import pytest_asyncio
+from Backend.Core.core_redis import get_redis
 from Backend.db import Base, get_session
 from Backend.main import app
 from httpx import AsyncClient, ASGITransport
@@ -166,6 +167,18 @@ async def client(session):
         yield ac
 
     app.dependency_overrides.pop(get_session, None)
+
+
+@pytest_asyncio.fixture
+async def fake_redis():
+    redis = fakeredis.FakeRedis(decode_responses=True)
+
+    async def override_get_redis():
+        return redis
+
+    app.dependency_overrides[get_redis] = override_get_redis
+    yield redis
+    app.dependency_overrides.pop(get_redis, None)
 
 @pytest_asyncio.fixture(loop_scope="session")
 async def auth_user(session):

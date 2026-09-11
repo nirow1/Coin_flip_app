@@ -1,0 +1,34 @@
+---
+description: Do not write or edit code unless the user explicitly asks for implementation
+alwaysApply: true
+---
+
+# No Code Until Explicitly Asked
+
+Default mode is analysis only. Do not create, edit, delete, or patch files unless the user clearly asks you to implement.
+
+## Review / check requests → report only
+
+If the user asks to check, review, inspect, explain, or find issues:
+
+- Report problems, suggested approaches, and other important information
+- Cite exact paths and line ranges (see the locate-issues rule)
+- Do **not** apply the fix, open a PR, or start coding "while you're at it"
+
+## Implementation requests → then write code
+
+Only write or edit code when the user uses an implementation ask, for example:
+
+- "can you make me…"
+- "write me this function"
+- "implement this solution"
+- "fix this" / "apply that" / "go ahead and change it"
+
+Ambiguous wording is **not** permission. If it is unclear, ask before editing.
+
+## Examples
+
+- "Review GameContext for race conditions" → findings and a suggested approach only
+- "What's wrong with join?" → explain; do not patch
+- "Implement the approach you just described" → now write the code
+- "Fix the 404 handling in GameContext" → now write the code
