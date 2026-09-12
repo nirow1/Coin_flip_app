@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getMyGames, type MyGameItemResponse } from '../../Api/game';
+import gameThumb from '../../imports/gold_diagonal.jpg';
 
 const statusStyle: Record<string, string> = {
   live: 'bg-green-100 text-green-700',
@@ -48,41 +49,50 @@ export default function MyGames() {
     <div className="p-6 text-gray-900">
       <h2 className="text-3xl text-[#efbf04] mb-5 font-[Alexandria]">My Games</h2>
       <div className="flex flex-col gap-3 max-w-7xl">
-        {myGamesData.map((game) => (
+        {loading && (
+          <p className="text-sm text-gray-400 font-[Alexandria]">Loading games…</p>
+        )}
+        {error && (
+          <p className="text-sm text-red-500 font-[Alexandria]">{error}</p>
+        )}
+        {!loading && !error && games.length === 0 && (
+          <p className="text-sm text-gray-400 font-[Alexandria]">No games yet</p>
+        )}
+        {!loading && !error && games.map((game) => (
           <div
             key={game.id}
             className="bg-white border border-gray-100 rounded-2xl shadow-sm flex items-center overflow-hidden h-[100px]"
           >
-            {/* Left image */}
             <img
-              src={game.img}
-              alt="game"
+              src={gameThumb}
+              alt=""
               className="h-full w-[120px] object-cover shrink-0"
             />
 
-            {/* Middle info */}
             <div className="flex-1 px-5 flex flex-col gap-1.5 min-w-0">
               <div className="flex items-center gap-2">
-                <span className="font-bold text-gray-800 font-[Alexandria] text-sm">{game.id}</span>
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full font-[Alexandria] ${statusStyle[game.status]}`}>
-                  {game.status}
+                <span className="font-bold text-gray-800 font-[Alexandria] text-sm">#{game.id}</span>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full font-[Alexandria] ${statusStyle[game.outcome]}`}>
+                  {outcomeLabel(game)}
                 </span>
               </div>
               <p className="text-xs text-gray-400 font-[Alexandria]">
-                Prize pool: <span className="text-[#efbf04] font-semibold">{game.prizePool} coins</span>
+                Prize pool:{' '}
+                <span className="text-[#efbf04] font-semibold">
+                  {Number(game.prize_pool).toLocaleString()} coins
+                </span>
               </p>
-              {/* Heads / tails bar */}
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-gray-400 font-[Alexandria] w-12">H {game.heads}%</span>
-                <div className="flex-1 h-2 rounded-full overflow-hidden flex gap-px">
-                  <div className="bg-[#efbf04] rounded-full" style={{ width: `${game.heads}%` }} />
-                  <div className="bg-slate-300 rounded-full flex-1" />
+              {game.outcome === 'live' && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-gray-400 font-[Alexandria] w-12">H {game.heads}%</span>
+                  <div className="flex-1 h-2 rounded-full overflow-hidden flex gap-px">
+                    <div className="bg-[#efbf04] rounded-full" style={{ width: `${game.heads}%` }} />
+                    <div className="bg-slate-300 rounded-full flex-1" />
+                  </div>
                 </div>
-                <span className="text-[10px] text-gray-400 font-[Alexandria] w-12 text-right">T {game.tails}%</span>
-              </div>
+              )}
             </div>
 
-            {/* Right button */}
             <div className="px-4 shrink-0">
               <button className="px-4 py-2 rounded-xl bg-[#efbf04] hover:bg-[#d4a800] text-white text-xs font-bold font-[Alexandria] transition-all shadow-sm whitespace-nowrap">
                 Game Details
