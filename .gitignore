@@ -71,6 +71,10 @@ pnpm-debug.log*
 *.pdf
 *.csv
 
+# Keep frontend source assets in git (Vite production builds need them)
+!Frontend/src/imports/
+!Frontend/src/imports/**
+
 # ─── Database ─────────────────────────────────────────────
 *.sqlite
 *.sqlite3
