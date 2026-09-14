@@ -24,6 +24,7 @@ class User(Base):
     discriminator = Column(String(4), nullable=True)
     password_hash = Column(String, nullable=False)
     country = Column(String, nullable=False)
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
 
     dob = Column(Date, nullable=False)
     estimated_age = Column(Float, nullable=True)

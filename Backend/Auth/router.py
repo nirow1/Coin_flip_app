@@ -10,14 +10,6 @@ from Backend.db import get_session
 router = APIRouter()
 
 
-def _cookie_secure() -> bool:
-    """Use Secure cookies when any CORS origin is https (production)."""
-    return any(
-        origin.strip().startswith("https://")
-        for origin in settings.CORS_ORIGINS.split(",")
-    )
-
-
 @router.post("/register")
 async def register(request: RegisterRequest, session=Depends(get_session)):
     try:
@@ -42,7 +34,7 @@ async def login(
         value=token,
         httponly=True,
         samesite="lax",
-        secure=_cookie_secure(),
+        secure=settings.COOKIE_SECURE,
         max_age=settings.JWT_EXPIRE_MINUTES * 60,
         path="/",
     )
@@ -63,6 +55,6 @@ async def logout(response: Response):
         key="access_token",
         path="/",
         samesite="lax",
-        secure=_cookie_secure(),
+        secure=settings.COOKIE_SECURE,
     )
     return {"ok": True}
