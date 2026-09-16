@@ -17,18 +17,28 @@ If the user asks to check, review, inspect, explain, or find issues:
 
 ## Implementation requests → then write code
 
-Only write or edit code when the user uses an implementation ask, for example:
+Only write or edit code when the user uses an **implementation** ask that names the change, for example:
 
-- "can you make me…"
-- "write me this function"
+- "can you make me…" / "write me this function"
 - "implement this solution"
-- "fix this" / "apply that" / "go ahead and change it"
+- "fix this" / "apply that" / "go ahead and change it" (when "this/that" clearly means the code fix)
 
 Ambiguous wording is **not** permission. If it is unclear, ask before editing.
 
+## Affirmations bind to the last offer — not to a latent fix
+
+Short replies like "yes", "yes do it", "do it", "ok", "go ahead" only authorize whatever the agent **just offered** in the previous message.
+
+- If the last offer was a **re-review / review / check**, do that analysis only — do **not** implement.
+- If the last message was a checklist or findings plus "say when you want a re-review", treat "yes do it" as **re-review**, not "apply the checklist".
+- Do not treat an affirmation as permission to write code just because a fix list was mentioned earlier in the thread.
+- If the last offer was ambiguous (review vs implement), ask which one — do not guess and edit.
+
 ## Examples
 
-- "Review GameContext for race conditions" → findings and a suggested approach only
+- "Review GameContext for race conditions" → findings only
 - "What's wrong with join?" → explain; do not patch
+- Agent: "Ping me when you want a re-review." User: "yes do it" → **re-review only**; do not rewrite files
+- Agent: checklist of cookie fixes + "Ping me when you want a re-review." User: "yes do it" → **re-review only**
 - "Implement the approach you just described" → now write the code
 - "Fix the 404 handling in GameContext" → now write the code

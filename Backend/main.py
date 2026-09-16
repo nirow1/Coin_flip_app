@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from Backend.Auth.router import router as auth_router
 from Backend.config import settings
+from Backend.Core.csrf import CsrfMiddleware
 from Backend.Game.router import router as game_router
 from Backend.Leader_board.router import router as leaderboard_router
 from Backend.lifespan import lifespan
@@ -25,6 +26,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(CsrfMiddleware)
 
 
 @app.get("/health")
