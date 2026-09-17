@@ -1,5 +1,6 @@
 import { createContext, useState, ReactNode, useEffect } from 'react';
 import { login as apiLogin, register as apiRegister, RegisterData, getMe as apiGetMe, logout as apiLogout } from '../Api/auth';
+import { setOnAuthExpired } from '../Api/client';
 
 interface User {
   email: string;
@@ -57,6 +58,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     getMe();
+  }, []);
+
+  useEffect(() => {
+    setOnAuthExpired(() => setUser(null));
   }, []);
 
   const register = async (data: RegisterData): Promise<boolean> => {

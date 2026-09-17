@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     JWT_SESSION_MAX_DAYS: int = 30
     JWT_REFRESH_SECRET: str 
     COOKIE_SECURE: bool = True
+    CORS_ORIGINS: str = "http://localhost:5173"
     STRIPE_SECRET_KEY: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
     SOLANA_WEBHOOK_SECRET: str = ""

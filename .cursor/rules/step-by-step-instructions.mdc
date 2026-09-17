@@ -1,0 +1,77 @@
+---
+description: >-
+  When the user asks for a plan, detailed plan, instructions, or how-to for
+  implementing something themselves, use teaching step-by-step format (not Plan Mode).
+alwaysApply: true
+---
+
+# Step-by-step implementation instructions (agent chat)
+
+## When this applies
+
+Use this format when the user asks for any of:
+
+- a plan / detailed plan / checklist of what to do
+- instructions / how to implement X / walk me through
+- "what do I put in these functions" / "explain more in detail what needs to be done"
+- pointing at a `.plan.md` slice and asking what to do next **in chat** (still use this format — do not answer like a Plan Mode doc)
+
+## When this does NOT apply
+
+- **Authoring/updating** Cursor Plan Mode or `*.plan.md` files — those stay high-level: approach, architecture, todos, security notes.
+- Code review / bug findings — use the cite-code-locations rule instead.
+- Actual implementation when the user asked you to write the code — implement; don't only lecture.
+
+## Required format (match the “right” style)
+
+Teach like a tutor for someone coding along. Structure:
+
+1. **Short opener** — what’s already done vs what they still need (one or two sentences). No long “problem essay.”
+2. **Numbered pieces** — one concern each (`## Piece A`, `## Piece B`).
+3. **Per piece / step:**
+   - Plain-language job in one short paragraph
+   - **What to write** — small copy-pasteable sketch (not a full file dump unless asked)
+   - Compact table: Part/Job, Line/Meaning, or URL/Why
+4. Nested steps when one piece has phases (`### Step B1`, `B2`, …) — each step is something they can type next.
+5. **Does / does not** table when roles are easy to mix up.
+6. **Order in the file** — numbered list of where each block sits.
+7. **After this file** — next wire-up or smoke test (short).
+
+## Hard bans (the “wrong” style)
+
+Do **not** answer with:
+
+- A long **“The problem”** / architecture narrative before actionable steps
+- Ownership/rationale essays (“how this fits the interceptor”, “why the plan prefers A”) as the main body
+- High-level “conceptually (not implementing)” bullet lists with no **What to write** sketches
+- Plan-doc tone: summary sections, “in short” restating the whole answer, optional deep dives instead of coding steps
+- Vague checklist only (“register callback, then bootstrap, then keep getMe thin”)
+
+Brief context (a few lines + one existing-code cite) is fine **only** to set up the next step — then immediately go to Piece/Step + What to write.
+
+## Mini shape
+
+```markdown
+You still need two pieces. CSRF is done.
+
+## Piece A — …
+### What to write
+(snippet)
+| Part | Job |
+
+## Piece B — …
+### Step B1 — …
+### Step B2 — …
+
+## Order in the file
+1. …
+
+## After `client.ts` is done
+…
+```
+
+## Style rules
+
+- Assume the reader is learning; be as clear as possible.
+- Name concrete files/symbols from this repo.
+- Do **not** edit code unless they separately ask to implement (see no-code-until-asked).

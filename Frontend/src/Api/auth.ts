@@ -19,3 +19,5 @@ export const register = (data: RegisterData) =>
 
 export const login = (email: string, password: string) =>
   client.post('/auth/login', { email, password });
+
+export const refresh = () => client.post('/auth/refresh');

@@ -15,6 +15,8 @@ app.include_router(auth_router, prefix="/auth")
 app.include_router(wallet_router)
 app.include_router(game_router, prefix="/game")
 app.include_router(leaderboard_router)
+# Inner first, outer last: CSRF failures still get CORS headers on the way out.
+app.add_middleware(CsrfMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -26,7 +28,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(CsrfMiddleware)
 
 
 @app.get("/health")
