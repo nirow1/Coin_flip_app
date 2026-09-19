@@ -14,18 +14,6 @@ async def get_balance(current_user: User = Depends(get_current_user), session: A
     wallet = await wallet_service.get_wallet(current_user.id)
     return BalanceResponse(balance=wallet.balance)
 
-@router.post("/credit", response_model=TransactionResponse)
-async def credit_wallet(data: AmountRequest, current_user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    wallet_service = WalletService(session)
-    transaction = await wallet_service.credit(current_user.id, data.amount)
-    return transaction
-
-@router.post("/debit", response_model=TransactionResponse)
-async def debit_wallet(data: AmountRequest, current_user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
-    wallet_service = WalletService(session)
-    transaction = await wallet_service.debit(current_user.id, data.amount)
-    return transaction
-
 @router.get("/transactions", response_model=list[TransactionResponse])
 async def get_transactions(current_user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     wallet_service = WalletService(session)

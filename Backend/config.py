@@ -17,9 +17,9 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:5173"
     STRIPE_SECRET_KEY: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
-    SOLANA_WEBHOOK_SECRET: str = ""
+    SOLANA_WEBHOOK_SECRET: str
     SOLANA_RPC_URL: str = "https://api.mainnet-beta.solana.com"
-    SOLANA_HOT_WALLET_ADDRESS: str = ""
+    SOLANA_HOT_WALLET_ADDRESS: str
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
@@ -31,6 +31,13 @@ class Settings(BaseSettings):
             v = "postgresql://" + v.removeprefix("postgres://")
         if v.startswith("postgresql://"):
             v = "postgresql+asyncpg://" + v.removeprefix("postgresql://")
+        return v
+
+    @field_validator("SOLANA_WEBHOOK_SECRET", "SOLANA_HOT_WALLET_ADDRESS")
+    @classmethod
+    def require_non_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("must be a non-empty string")
         return v
 
     class Config:
