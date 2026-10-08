@@ -70,7 +70,7 @@ export default function WithdrawPage() {
               </div>
               <div className="bg-[#fff7d6] rounded-xl p-4 flex flex-col gap-1 text-xs font-[Alexandria]">
                 <div className="flex justify-between text-gray-600"><span>Processing time</span><span className="font-bold text-gray-800">1–3 business days</span></div>
-                <div className="flex justify-between text-gray-600"><span>Minimum withdrawal</span><span className="font-bold text-gray-800">500 coins</span></div>
+                <div className="flex justify-between text-gray-600"><span>Minimum withdrawal</span><span className="font-bold text-gray-800">10 credits</span></div>
                 <div className="flex justify-between text-gray-600"><span>Fee</span><span className="font-bold text-gray-800">1.5%</span></div>
               </div>
               <button className="w-full py-3 rounded-xl bg-[#efbf04] hover:bg-[#d4a800] text-white font-bold font-[Alexandria] text-sm transition-all shadow-sm">

@@ -284,7 +284,8 @@ class GameService:
             flip_time = self._as_utc(game.flip_time)
             if flip_time < now - timedelta(minutes=1):
                 try:
-                    await self.cancel_game(game.id, wallet)
+                    async with self.session.begin_nested():
+                        await self.cancel_game(game.id, wallet)
                 except Exception as e:
                     # Leave status open so a later tick can retry; do not mark canceled.
                     print(f"Error canceling stale open game {game.id}: {e}")

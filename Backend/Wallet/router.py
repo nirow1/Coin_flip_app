@@ -1,4 +1,4 @@
-from Backend.Wallet.schemas import BalanceResponse, TransactionResponse, AmountRequest, SolanaWebhookPayload
+from Backend.Wallet.schemas import BalanceResponse, TransactionResponse, SolanaWebhookPayload
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from Backend.Auth.dependencies import get_current_user
@@ -33,9 +33,7 @@ async def solana_webhook(
     await wallet_service.process_solana_webhook(
         raw_body=raw_body,
         signature=signature,
-        payload_destination=payload.destination_address,
-        amount_sol=payload.amount_sol,
-        tx_hash=payload.tx_hash
+        tx_signature=payload.signature,
     )
 
-    return {"message": "Deposit processed"}
+    return {"message": "ok"}

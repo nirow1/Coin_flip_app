@@ -4,7 +4,7 @@ overview: "Replace card on-ramp and USDC-play-balance custody with a ticket-sell
 todos:
   - id: phase0-cleanup
     content: Delete deposit_sol/withdraw_sol/per-user webhook path; cold receive + hot payout settings; oracle/fee/mint/cluster; no mainnet RPC default; AmountRequest cleanup
-    status: pending
+    status: completed
   - id: phase1-tx-boundary
     content: Drop commit from _apply_transaction; engine begin_nested per game; callers own commit — prerequisite for orders + withdraw
     status: pending

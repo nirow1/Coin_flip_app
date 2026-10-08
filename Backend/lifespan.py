@@ -3,6 +3,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from Backend.Core.core_solana import (
+    assert_solana_cluster_matches_rpc,
+    validate_solana_settings_local,
+)
 from Backend.Core.leader_lock import LeaderLock, run_if_leader
 from Backend.Core.redis_config import create_redis_client
 from Backend.db import SessionLocal, init_db
@@ -11,6 +15,10 @@ from Backend.Game.engine import GameEngine
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Fail closed on Solana cluster/mint/keypair misconfiguration before serving.
+    validate_solana_settings_local()
+    await assert_solana_cluster_matches_rpc()
+
     # Initialize the database on startup
     await init_db()
 

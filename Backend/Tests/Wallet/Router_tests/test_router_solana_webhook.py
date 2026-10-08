@@ -1,8 +1,7 @@
-from unittest.mock import AsyncMock, patch
-from decimal import Decimal
 import hashlib
-import json
 import hmac
+import json
+
 import pytest
 
 from Backend.config import settings
@@ -10,21 +9,16 @@ from Backend.config import settings
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
-async def test_solana_webhook_success(solana_client):
-    client     = solana_client["client"]
-    token      = solana_client["token"]
-    public_key = solana_client["public_key"]
+async def test_solana_webhook_acks_signature_only(solana_client):
+    """Signature-only payload + valid HMAC → 200; balance unchanged (no CreditOrder yet)."""
+    client = solana_client["client"]
+    token = solana_client["token"]
 
-    balance_before = Decimal(
-        (await client.get("/wallet/balance", headers={"Authorization": f"Bearer {token}"})).json()["balance"]
-    )
+    balance_before = (
+        await client.get("/wallet/balance", headers={"Authorization": f"Bearer {token}"})
+    ).json()["balance"]
 
-    payload = {
-        "tx_hash": "webhook_router_success_tx_hash",
-        "destination_address": public_key,
-        "amount_sol": "1.00",
-    }
-
+    payload = {"signature": "webhook_router_ack_tx_sig"}
     raw_body = json.dumps(payload).encode()
     signature = hmac.new(
         settings.SOLANA_WEBHOOK_SECRET.encode(),
@@ -32,37 +26,29 @@ async def test_solana_webhook_success(solana_client):
         hashlib.sha256,
     ).hexdigest()
 
-    with patch("Backend.Wallet.services.verify_solana_transaction", new_callable=AsyncMock) as mock_verify:
-        mock_verify.return_value = True
-
-        response = await client.post(
-            "/wallet/webhook/solana",
-            content=raw_body,
-            headers={
-                "Content-Type": "application/json",
-                "x-webhook-signature": signature,
-            },
-        )
+    response = await client.post(
+        "/wallet/webhook/solana",
+        content=raw_body,
+        headers={
+            "Content-Type": "application/json",
+            "x-webhook-signature": signature,
+        },
+    )
 
     assert response.status_code == 200
-    assert response.json() == {"message": "Deposit processed"}
+    assert response.json() == {"message": "ok"}
 
-    balance_after = Decimal(
-        (await client.get("/wallet/balance", headers={"Authorization": f"Bearer {token}"})).json()["balance"]
-    )
-    assert balance_after == balance_before + Decimal("1.00")
+    balance_after = (
+        await client.get("/wallet/balance", headers={"Authorization": f"Bearer {token}"})
+    ).json()["balance"]
+    assert balance_after == balance_before
 
 
 async def test_solana_webhook_invalid_signature(solana_client):
     """Wrong HMAC signature → 401."""
-    client    = solana_client["client"]
-    public_key = solana_client["public_key"]
+    client = solana_client["client"]
 
-    payload = {
-        "tx_hash": "webhook_invalid_sig_tx_hash",
-        "destination_address": public_key,
-        "amount_sol": "1.00",
-    }
+    payload = {"signature": "webhook_invalid_sig_tx"}
     raw_body = json.dumps(payload).encode()
 
     response = await client.post(
@@ -80,14 +66,9 @@ async def test_solana_webhook_invalid_signature(solana_client):
 
 async def test_solana_webhook_missing_signature_header(solana_client):
     """Missing x-webhook-signature header → router passes empty string → 401."""
-    client     = solana_client["client"]
-    public_key = solana_client["public_key"]
+    client = solana_client["client"]
 
-    payload = {
-        "tx_hash": "webhook_missing_sig_tx_hash",
-        "destination_address": public_key,
-        "amount_sol": "1.00",
-    }
+    payload = {"signature": "webhook_missing_sig_tx"}
     raw_body = json.dumps(payload).encode()
 
     response = await client.post(
@@ -100,10 +81,10 @@ async def test_solana_webhook_missing_signature_header(solana_client):
 
 
 async def test_solana_webhook_invalid_payload(solana_client):
-    """Malformed payload missing required fields → FastAPI returns 422 before service is called."""
+    """Malformed payload missing signature → FastAPI returns 422 before service is called."""
     client = solana_client["client"]
 
-    raw_body = json.dumps({"tx_hash": "only_one_field"}).encode()
+    raw_body = json.dumps({"tx_hash": "old_field_not_accepted"}).encode()
     signature = hmac.new(
         settings.SOLANA_WEBHOOK_SECRET.encode(),
         raw_body,
@@ -120,4 +101,3 @@ async def test_solana_webhook_invalid_payload(solana_client):
     )
 
     assert response.status_code == 422
-

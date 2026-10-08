@@ -67,7 +67,8 @@ async def test_b_scheduler_triggers_at_19_utc():
 
     mock_service.ensure_open_game.assert_awaited_once_with(mock_wallet)
 
-    # DB commit
+    # One SAVEPOINT per processable game + one outer commit
+    assert mock_session.begin_nested.call_count == 1
     mock_session.commit.assert_awaited_once()
 
 
@@ -89,6 +90,7 @@ async def test_scheduler_ensures_open_game_outside_19_utc():
     mock_service.ensure_open_game.assert_awaited_once_with(mock_wallet)
     mock_service.get_active_games.assert_not_called()
     mock_service.execute_flip.assert_not_called()
+    mock_session.begin_nested.assert_not_called()
     mock_session.commit.assert_awaited_once()
 
 
@@ -121,7 +123,8 @@ async def test_scheduler_iter_games():
     assert mock_service.execute_flip.await_count == 2
     mock_service.ensure_open_game.assert_awaited_once_with(mock_wallet)
 
-    # DB commit
+    # begin_nested only for processable games (active + open; not finished)
+    assert mock_session.begin_nested.call_count == 2
     mock_session.commit.assert_awaited_once()
 
 
@@ -148,6 +151,7 @@ async def test_scheduler_showdown_trigger():
         call(game_1.id, mock_wallet, mock_leaderboard, engine.redis_client),
     ])
     mock_service.ensure_open_game.assert_awaited_once_with(mock_wallet)
+    assert mock_session.begin_nested.call_count == 1
 
 
 @freeze_time("2025-01-01 19:00:00", tz_offset=0)
@@ -171,4 +175,5 @@ async def test_scheduler_game_error_continues_processing():
     # game_2 must still be processed despite game_1 error
     assert mock_service.execute_flip.await_count == 2
     mock_service.ensure_open_game.assert_awaited_once_with(mock_wallet)
+    assert mock_session.begin_nested.call_count == 2
     mock_session.commit.assert_awaited_once()  # commit runs even after error

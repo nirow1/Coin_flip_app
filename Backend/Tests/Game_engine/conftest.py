@@ -14,6 +14,12 @@ def make_engine_with_mocks():
     mock_session.__aexit__.return_value = False
     mock_session.commit = AsyncMock()
 
+    # SAVEPOINT stub for async with session.begin_nested()
+    nested = AsyncMock()
+    nested.__aenter__.return_value = nested
+    nested.__aexit__.return_value = False
+    mock_session.begin_nested = MagicMock(return_value=nested)
+
     mock_async_session = MagicMock(return_value=mock_session)
     engine = GameEngine(
         async_session=mock_async_session,

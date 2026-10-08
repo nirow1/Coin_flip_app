@@ -1,7 +1,10 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
+
+SolanaCluster = Literal["mainnet-beta", "devnet", "testnet"]
 
 
 class Settings(BaseSettings):
@@ -12,14 +15,20 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 60
     JWT_REFRESH_EXPIRE_DAYS: int = 7
     JWT_SESSION_MAX_DAYS: int = 30
-    JWT_REFRESH_SECRET: str 
+    JWT_REFRESH_SECRET: str
     COOKIE_SECURE: bool = True
     CORS_ORIGINS: str = "http://localhost:5173"
     STRIPE_SECRET_KEY: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Solana — no mainnet RPC default; fail closed if secrets/addresses missing
     SOLANA_WEBHOOK_SECRET: str
-    SOLANA_RPC_URL: str = "https://api.mainnet-beta.solana.com"
+    SOLANA_RPC_URL: str
+    SOLANA_CLUSTER: SolanaCluster
+    SOLANA_COLD_RECEIVE_ADDRESS: str
     SOLANA_HOT_WALLET_ADDRESS: str
+    SOLANA_HOT_WALLET_SECRET: str  # keypair JSON from secret store
+    SOLANA_USDC_MINT: str
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
@@ -33,7 +42,14 @@ class Settings(BaseSettings):
             v = "postgresql+asyncpg://" + v.removeprefix("postgresql://")
         return v
 
-    @field_validator("SOLANA_WEBHOOK_SECRET", "SOLANA_HOT_WALLET_ADDRESS")
+    @field_validator(
+        "SOLANA_WEBHOOK_SECRET",
+        "SOLANA_RPC_URL",
+        "SOLANA_COLD_RECEIVE_ADDRESS",
+        "SOLANA_HOT_WALLET_ADDRESS",
+        "SOLANA_HOT_WALLET_SECRET",
+        "SOLANA_USDC_MINT",
+    )
     @classmethod
     def require_non_empty(cls, v: str) -> str:
         if not v or not v.strip():

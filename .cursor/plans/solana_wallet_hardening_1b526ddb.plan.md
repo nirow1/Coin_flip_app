@@ -1,6 +1,6 @@
 ---
 name: Solana wallet hardening
-overview: Harden Solana deposit/withdraw rails and remodel money to a single USD play balance backed by USDC on Solana. Card FX stays with MoonPay/Banxa (see card on-ramp plan). No in-app SOL convert.
+overview: SUPERSEDED by ticket_credit_rails_d3acc8a1.plan.md (ticket credits + cold receive / hot payout). Keep useful security pieces from this plan only where that doc reuses them (close public credit/debit, harden send/verify, transaction boundaries).
 todos:
   - id: phase0-close-credit
     content: Remove /wallet/credit and /wallet/debit routes; keep fail-closed webhook secret + hot wallet settings; delete stale core_solana duplicate if present

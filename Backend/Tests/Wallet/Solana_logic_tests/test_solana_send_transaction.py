@@ -33,7 +33,7 @@ async def test_solana_send_transaction_success(mock_keypair):
         result = await solana_send_transaction(
             destination_address=DESTINATION,
             amount_sol=AMOUNT_SOL,
-            rpc_url="https://api.mainnet-beta.solana.com",
+            rpc_url="https://api.devnet.solana.com",
         )
 
     assert result == str(FAKE_SIGNATURE)
@@ -55,7 +55,7 @@ async def test_solana_send_transaction_rpc_unreachable(mock_keypair):
             await solana_send_transaction(
                 destination_address=DESTINATION,
                 amount_sol=AMOUNT_SOL,
-                rpc_url="https://api.mainnet-beta.solana.com",
+                rpc_url="https://api.devnet.solana.com",
             )
 
     mock_client.send_raw_transaction.assert_not_called()
@@ -77,7 +77,7 @@ async def test_solana_send_transaction_send_fails(mock_keypair):
             await solana_send_transaction(
                 destination_address=DESTINATION,
                 amount_sol=AMOUNT_SOL,
-                rpc_url="https://api.mainnet-beta.solana.com",
+                rpc_url="https://api.devnet.solana.com",
             )
 
     mock_client.confirm_transaction.assert_not_called()
@@ -98,23 +98,24 @@ async def test_solana_send_transaction_confirm_fails(mock_keypair):
             await solana_send_transaction(
                 destination_address=DESTINATION,
                 amount_sol=AMOUNT_SOL,
-                rpc_url="https://api.mainnet-beta.solana.com",
+                rpc_url="https://api.devnet.solana.com",
             )
 
     mock_client.send_raw_transaction.assert_called_once()
 
 
-async def test_solana_send_transaction_keypair_file_not_found():
-    """Keypair file missing → FileNotFoundError propagates before any RPC call."""
+async def test_solana_send_transaction_keypair_secret_missing():
+    """Empty hot wallet secret → RuntimeError before any RPC call."""
     mock_client = AsyncMock()
 
-    with patch("builtins.open", side_effect=FileNotFoundError("No such file or directory")), \
+    with patch("Backend.Core.core_solana.settings") as mock_settings, \
          patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client):
-        with pytest.raises(FileNotFoundError):
+        mock_settings.SOLANA_HOT_WALLET_SECRET = ""
+        with pytest.raises(RuntimeError, match="SOLANA_HOT_WALLET_SECRET"):
             await solana_send_transaction(
                 destination_address=DESTINATION,
                 amount_sol=AMOUNT_SOL,
-                rpc_url="https://api.mainnet-beta.solana.com",
+                rpc_url="https://api.devnet.solana.com",
             )
 
     mock_client.get_latest_blockhash.assert_not_called()

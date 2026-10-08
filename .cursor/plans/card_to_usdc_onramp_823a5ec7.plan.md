@@ -1,6 +1,6 @@
 ---
 name: Card to USDC onramp
-overview: "Polymarket-shaped funding: USD play balances backed by USDC on Solana; fiat FX and card checkout outsourced to MoonPay/Banxa; licence-free build via faucet/sandbox/self-fund; production cards gated on licence + provider KYB."
+overview: "SUPERSEDED by ticket_credit_rails_d3acc8a1.plan.md — card/MoonPay on-ramp is out of scope; product is ticket credits with Solana-first auto deposits (no fiat provider)."
 todos:
   - id: amend-wallet-plan
     content: "Update solana_wallet_hardening product decisions: USD/USDC, drop Phase 1b SOL convert, USDC mint everywhere EURC was named"

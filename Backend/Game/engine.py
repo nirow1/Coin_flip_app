@@ -36,17 +36,19 @@ class GameEngine:
                     games = await service.get_active_games()
 
                     for game in games:
+                        if game.status not in ("open", "active", "showdown_pending"):
+                            continue
                         try:
-                            if game.status in ("open", "active"):
-                                await service.execute_flip(game.id, wallet, leaderboard)
-
-                            elif game.status == "showdown_pending":
-                                await service.try_start_showdown(
-                                    game.id,
-                                    wallet,
-                                    leaderboard,
-                                    self.redis_client,
-                                )
+                            async with session.begin_nested():
+                                if game.status in ("open", "active"):
+                                    await service.execute_flip(game.id, wallet, leaderboard)
+                                else:
+                                    await service.try_start_showdown(
+                                        game.id,
+                                        wallet,
+                                        leaderboard,
+                                        self.redis_client,
+                                    )
                         except Exception as e:
                             print(f"Error processing game {game.id}: {e}")
 

@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import logging
 from decimal import Decimal
 from typing import cast
 
@@ -9,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from Backend.config import settings
 from Backend.Wallet.enums import TransactionType
-from Backend.Wallet.models import Transaction, UserSolanaWallet, Wallet
+from Backend.Wallet.models import Transaction, Wallet
+
+logger = logging.getLogger(__name__)
 
 
 class WalletService:
@@ -66,34 +69,30 @@ class WalletService:
         transaction = Transaction(wallet_id=wallet.id, amount=amount, type=transaction_type, tx_hash=tx_hash)
 
         self.session.add(transaction)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(transaction)
         await self.session.refresh(wallet)
         return transaction
 
-    async def process_solana_webhook(self, raw_body: bytes, signature: str, payload_destination: str, amount_sol: Decimal, tx_hash: str):
-        # 1. Verify HMAC signature
+    async def process_solana_webhook(self, raw_body: bytes, signature: str, tx_signature: str) -> None:
+        """Ack Solana deposit webhooks. Payload is signature-only; never 404.
+
+        CreditOrder matching + RPC verify land in later phases. Until then,
+        unknown/unmatched signatures are logged and acknowledged with 200 so
+        providers do not retry-storm.
+        """
         expected = hmac.new(
             settings.SOLANA_WEBHOOK_SECRET.encode(),
             raw_body,
-            hashlib.sha256
+            hashlib.sha256,
         ).hexdigest()
         if not hmac.compare_digest(expected, signature):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook signature")
 
-        # 2. Look up user by destination Solana address
-        result = await self.session.execute(
-            select(UserSolanaWallet).where(UserSolanaWallet.public_key == payload_destination)
-        )
-        solana_wallet = result.scalar_one_or_none()
-        if solana_wallet is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solana address not linked to any user")
-
-        # 3. Credit user
-        await self.deposit_sol(
-            user_id=solana_wallet.user_id,
-            amount_sol=amount_sol,
-            tx_hash=tx_hash
+        # Phase 0: no CreditOrder table yet — treat every notified signature as unmatched.
+        logger.info(
+            "solana webhook unmatched signature=%s (CreditOrder matching not wired yet)",
+            tx_signature,
         )
 
     async def credit(self, user_id: int, amount: Decimal, transaction_type: TransactionType = TransactionType.CREDIT, tx_hash: str | None = None) -> Transaction:

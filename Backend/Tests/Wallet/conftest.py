@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from Backend.Wallet.router import router as wallet_router
 from Backend.Auth.router import router as auth_router
@@ -180,11 +180,10 @@ def mock_signature():
 
 @pytest.fixture()
 def mock_keypair():
-    """Mocks Keypair.from_json and the keypair file read."""
+    """Mocks hot keypair load from settings secret store."""
     keypair = MagicMock()
     keypair.pubkey.return_value = MagicMock()
-    with patch("builtins.open", mock_open(read_data='["fake_keypair_json"]')), \
-         patch("Backend.Core.core_solana.Keypair.from_json", return_value=keypair):
+    with patch("Backend.Core.core_solana.Keypair.from_json", return_value=keypair):
         yield keypair
 
 
