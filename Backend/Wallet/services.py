@@ -1,16 +1,15 @@
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
+import hashlib
+import hmac
 from decimal import Decimal
 from typing import cast
+
+from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from Backend.Wallet.models import Wallet, Transaction, UserSolanaWallet
-from Backend.Wallet.enums import TransactionType
-from Backend.Core.core_solana import solana_send_transaction, verify_solana_transaction
 from Backend.config import settings
-from fastapi import HTTPException, status
-import hmac
-import hashlib
+from Backend.Wallet.enums import TransactionType
+from Backend.Wallet.models import Transaction, UserSolanaWallet, Wallet
 
 
 class WalletService:
@@ -96,73 +95,6 @@ class WalletService:
             amount_sol=amount_sol,
             tx_hash=tx_hash
         )
-
-    async def deposit_sol(self, user_id: int, amount_sol: Decimal, tx_hash: str):
-        # 1. Verify on-chain transaction BEFORE crediting balance
-        try:
-            await verify_solana_transaction(
-                tx_hash=tx_hash,
-                expected_destination=settings.SOLANA_HOT_WALLET_ADDRESS,
-                expected_amount_sol=amount_sol,
-                rpc_url=settings.SOLANA_RPC_URL
-            )
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"On-chain deposit verification failed: {e}"
-            )
-
-        # 2. Only credit if verification passed
-        try:
-            return await self.credit(
-                user_id=user_id,
-                amount=amount_sol,
-                transaction_type=TransactionType.DEPOSIT_SOLANA,
-                tx_hash=tx_hash
-            )
-        except IntegrityError:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Transaction {tx_hash} has already been processed"
-            )
-
-    async def withdraw_sol(self, user_id: int, amount_sol: Decimal, destination_address: str):
-        # TODO(void-game): enforce funds_locked_until / non-withdrawable winnings
-        # so a void clawback cannot race a Solana withdrawal.
-        # 1. Debit internal balance first
-        transaction = await self.debit(
-            user_id=user_id,
-            amount=amount_sol,
-            transaction_type=TransactionType.WITHDRAW_SOLANA
-        )
-
-        # 2. Send SOL on-chain; if it fails, refund the internal balance
-        try:
-            tx_sig = await solana_send_transaction(
-                destination_address,
-                amount_sol,
-                settings.SOLANA_RPC_URL
-            )
-        except Exception as e:
-            error_msg = str(e)
-            if error_msg.startswith("SENT_UNCONFIRMED:"):
-                # SOL is in-flight — do NOT refund, flag for manual review
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=f"SOL sent but confirmation failed: {error_msg}. Manual review required."
-                )
-            # SOL was never sent — safe to refund
-            await self.credit(
-                user_id=user_id,
-                amount=amount_sol,
-                transaction_type=TransactionType.CREDIT
-            )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"On-chain transaction failed, withdrawal reversed: {e}"
-            )
-
-        return {"transaction": transaction, "tx_signature": tx_sig}
 
     async def credit(self, user_id: int, amount: Decimal, transaction_type: TransactionType = TransactionType.CREDIT, tx_hash: str | None = None) -> Transaction:
         wallet = await self.get_wallet_for_update(user_id)
