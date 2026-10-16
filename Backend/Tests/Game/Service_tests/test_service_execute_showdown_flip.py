@@ -19,9 +19,10 @@ async def test_execute_showdown_flip_success(game_context, make_game, create_tes
 
     await service.session.flush()
 
-    game_after_flip = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard, redis)
+    game_after_flip, timer_key = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard)
 
     assert game_after_flip.status == "showdown_active"
+    assert timer_key == f"showdown_flip:{game.id}:2"
 
     players = await service.get_all_players(game.id)
     eliminated = [p for p in players if p.is_eliminated]
@@ -46,9 +47,10 @@ async def test_execute_showdown_flip_winner(game_context, test_user, test_wallet
     balance_before = (await wallet.get_wallet(test_user.id)).balance
 
     with patch.object(GameService, "_flip_coin", return_value="tails"):
-        game_after_flip = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard, redis)
+        game_after_flip, timer_key = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard)
 
     assert game_after_flip.status == "finished"
+    assert timer_key is None
 
     balance_after = (await wallet.get_wallet(test_user.id)).balance
     assert balance_after == balance_before + Decimal("101.00")
@@ -59,7 +61,7 @@ async def test_execute_showdown_flip_not_showdown_active(game_context, make_game
     game = await make_game("active")
 
     with pytest.raises(ValueError, match="Showdown is not active"):
-        await service.execute_showdown_flip(game.id, wallet, mock_leaderboard, redis)
+        await service.execute_showdown_flip(game.id, wallet, mock_leaderboard)
 
 
 async def test_execute_showdown_flip_winner_all_choose_one_side(game_context, make_game, create_test_user, mock_leaderboard):
@@ -72,8 +74,9 @@ async def test_execute_showdown_flip_winner_all_choose_one_side(game_context, ma
 
     await service.session.flush()
 
-    game_after_flip = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard, redis)
+    game_after_flip, timer_key = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard)
     assert game_after_flip.status == "showdown_active"
+    assert timer_key == f"showdown_flip:{game.id}:2"
 
     players = await service.get_all_players(game.id)
     assert len(players) == 10
@@ -93,9 +96,10 @@ async def test_execute_showdown_flip_invalid_flip_explicitly(game_context, make_
     await service.session.flush()
 
     with patch.object(GameService, "_flip_coin", return_value="tails"):
-        result = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard, redis)
+        result, timer_key = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard)
 
     assert result.status == "showdown_active"
+    assert timer_key == f"showdown_flip:{game.id}:2"
 
     players = await service.get_all_players(game.id)
     assert len(players) == 5
@@ -118,7 +122,7 @@ async def test_execute_showdown_flip_no_side_gets_random_assignment(game_context
     # First two _flip_coin calls assign sides (heads, tails), third call determines winning side (heads)
     # → user0 gets "heads" (survives), user1 gets "tails" (eliminated)
     with patch.object(GameService, "_flip_coin", side_effect=["heads", "tails", "heads"]):
-        result = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard, redis)
+        result, timer_key = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard)
 
     players = await service.get_all_players(game.id)
     eliminated = [p for p in players if p.is_eliminated]
@@ -126,6 +130,7 @@ async def test_execute_showdown_flip_no_side_gets_random_assignment(game_context
 
     assert len(eliminated) == 1
     assert len(survivors) == 1
+    assert timer_key is None  # single survivor → finished, no next timer
     # Winner's side is reset to None by _apply_eliminations
     assert survivors[0].side is None
 
@@ -144,7 +149,7 @@ async def test_execute_showdown_flip_round_number_increments(game_context, make_
 
     # Invalid flip (everyone on heads, coin is tails) — round still counts
     with patch.object(GameService, "_flip_coin", return_value="tails"):
-        await service.execute_showdown_flip(game.id, wallet, mock_leaderboard, redis)
+        await service.execute_showdown_flip(game.id, wallet, mock_leaderboard)
 
     players = await service.get_all_players(game.id)
     assert all(p.round_number == 4 for p in players)
@@ -164,7 +169,7 @@ async def test_execute_showdown_flip_invalid_flip_then_valid_flip(game_context, 
 
     # Round 1: invalid flip — all sides reset to None
     with patch.object(GameService, "_flip_coin", return_value="tails"):
-        await service.execute_showdown_flip(game.id, wallet, mock_leaderboard, redis)
+        await service.execute_showdown_flip(game.id, wallet, mock_leaderboard)
 
     players_after_invalid = await service._get_players_for_game(game.id)
     assert all(p.side is None for p in players_after_invalid), \
@@ -173,15 +178,17 @@ async def test_execute_showdown_flip_invalid_flip_then_valid_flip(game_context, 
     # Round 2: nobody chose a side → all get random assignment then a real flip
     # sides: heads, tails, heads, tails → winning side: heads → 2 survive
     with patch.object(GameService, "_flip_coin", side_effect=["heads", "tails", "heads", "tails", "heads"]):
-        result = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard, redis)
+        result, timer_key = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard)
 
     assert result.status == "showdown_active"
+    assert timer_key == f"showdown_flip:{game.id}:3"
     all_players = await service.get_all_players(game.id)
     eliminated = [p for p in all_players if p.is_eliminated]
     assert len(eliminated) == 2
 
 
-async def test_execute_showdown_flip_reddis_key_made(game_context, make_game, create_test_user, mock_leaderboard):
+async def test_execute_showdown_flip_timer_key_returned(game_context, make_game, create_test_user, mock_leaderboard):
+    """Service returns the next timer key; Redis is armed by the engine after commit."""
     service, wallet, redis = game_context
     game = await make_game("showdown_active")
 
@@ -194,9 +201,9 @@ async def test_execute_showdown_flip_reddis_key_made(game_context, make_game, cr
     await service.session.flush()
 
     with patch.object(GameService, "_flip_coin", return_value="heads"):
-        await service.execute_showdown_flip(game.id, wallet, mock_leaderboard, redis)
+        _, timer_key = await service.execute_showdown_flip(game.id, wallet, mock_leaderboard)
 
+    assert timer_key == f"showdown_flip:{game.id}:2"
+    # Service must not arm Redis itself
     keys = await redis.keys("showdown_flip:*")
-    assert len(keys) == 1
-    assert keys[0].startswith(f"showdown_flip:{game.id}:2")
-
+    assert keys == []

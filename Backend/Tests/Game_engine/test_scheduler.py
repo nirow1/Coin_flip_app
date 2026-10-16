@@ -137,8 +137,10 @@ async def test_scheduler_showdown_trigger():
     mock_leaderboard = AsyncMock()
 
     game_1 = create_game(1, "showdown_pending")
+    timer_key = "showdown_flip:1:1"
 
     mock_service.get_active_games.return_value = [game_1]
+    mock_service.try_start_showdown.return_value = (game_1, timer_key)
 
     patches = _patch_scheduler(mock_service, mock_wallet, mock_leaderboard)
     with patches[0], patches[1], patches[2], patches[3]:
@@ -148,10 +150,12 @@ async def test_scheduler_showdown_trigger():
     mock_service.get_active_games.assert_awaited_once()
 
     mock_service.try_start_showdown.assert_has_awaits([
-        call(game_1.id, mock_wallet, mock_leaderboard, engine.redis_client),
+        call(game_1.id, mock_wallet, mock_leaderboard),
     ])
     mock_service.ensure_open_game.assert_awaited_once_with(mock_wallet)
     assert mock_session.begin_nested.call_count == 1
+    mock_session.commit.assert_awaited_once()
+    engine.redis_client.set.assert_awaited_once_with(timer_key, "1", ex=60)
 
 
 @freeze_time("2025-01-01 19:00:00", tz_offset=0)

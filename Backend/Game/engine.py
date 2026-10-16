@@ -31,6 +31,7 @@ class GameEngine:
                 service = GameService(session)
                 wallet = WalletService(session)
                 leaderboard = LeaderBoardService(session)
+                timer_keys: list[str] = []
 
                 if is_flip_minute:
                     games = await service.get_active_games()
@@ -43,17 +44,21 @@ class GameEngine:
                                 if game.status in ("open", "active"):
                                     await service.execute_flip(game.id, wallet, leaderboard)
                                 else:
-                                    await service.try_start_showdown(
+                                    _, timer_key = await service.try_start_showdown(
                                         game.id,
                                         wallet,
                                         leaderboard,
-                                        self.redis_client,
                                     )
+                                    if timer_key:
+                                        timer_keys.append(timer_key)
                         except Exception as e:
                             print(f"Error processing game {game.id}: {e}")
 
                 await service.ensure_open_game(wallet)
                 await session.commit()
+
+                for timer_key in timer_keys:
+                    await self.redis_client.set(timer_key, "1", ex=60)
 
             # Throttle ensure + avoid double-triggering the 19:00 flip minute.
             await asyncio.sleep(60)
@@ -87,12 +92,13 @@ class GameEngine:
                 leaderboard = LeaderBoardService(session)
 
                 try:
-                    await service.execute_showdown_flip(
+                    _, timer_key = await service.execute_showdown_flip(
                         game_id,
                         wallet,
                         leaderboard,
-                        self.redis_client,
                     )
                     await session.commit()
+                    if timer_key:
+                        await self.redis_client.set(timer_key, "1", ex=60)
                 except Exception as e:
                     print(f"Error processing showdown flip for game {game_id}: {e}")
