@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import base64
-from decimal import Decimal
+import asyncio
+import logging
+from dataclasses import dataclass
 from typing import Any, NoReturn
 
-from solana.constants import LAMPORTS_PER_SOL
 from solana.rpc.async_api import AsyncClient
-from solana.rpc.commitment import Finalized
+from solana.rpc.commitment import Confirmed, Finalized
 from solana.rpc.models import TxOpts
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
@@ -16,6 +16,16 @@ from solders.transaction import Transaction
 from spl.memo.constants import MEMO_PROGRAM_ID
 
 from Backend.config import SolanaCluster, settings
+
+logger = logging.getLogger(__name__)
+
+# Bitcoin / Solana base58 alphabet (for raw instruction data fallback).
+_B58_ALPHABET = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+_B58_INDEX = {c: i for i, c in enumerate(_B58_ALPHABET)}
+
+_RPC_TIMEOUT_SEC = 10.0
+_GENESIS_RETRIES = 3
+_GENESIS_RETRY_DELAY_SEC = 0.5
 
 # Official cluster genesis hashes (getGenesisHash).
 CLUSTER_GENESIS_HASH: dict[SolanaCluster, str] = {
@@ -38,6 +48,20 @@ MEMO_PROGRAM_IDS: frozenset[str] = frozenset(
         "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo",
     }
 )
+
+# Rent-exempt minimum for a basic system account (SOL transfers that may fund new wallets).
+SYSTEM_ACCOUNT_RENT_EXEMPT_LAMPORTS = 890_880
+
+
+@dataclass(frozen=True)
+class VerifiedSolanaTx:
+    """On-chain deposit facts retained for credit matching, late-pay rules, and refunds."""
+
+    received_lamports: int
+    block_time: int | None
+    slot: int | None
+    fee_payer: str
+    memo: str | None
 
 
 class SolanaSendError(Exception):
@@ -70,24 +94,71 @@ class SendFailedRefundable(SolanaSendError):
         self.__cause__ = cause
 
 
+class SendFailedOnChain(SolanaSendError):
+    """Transaction landed with a program/runtime error — final; safe to refund."""
+
+    def __init__(self, signature: str, cause: BaseException | None = None) -> None:
+        detail = f"SEND_FAILED_ON_CHAIN:{signature}"
+        if cause is not None:
+            detail = f"{detail}:{cause}"
+        super().__init__(detail, signature=signature)
+        self.__cause__ = cause
+
+
+class SolanaClusterMismatchError(RuntimeError):
+    """RPC genesis hash does not match SOLANA_CLUSTER — configuration error."""
+
+
+def _secret_str(value: object) -> str:
+    """Unwrap SecretStr; plain str allowed for test mocks."""
+    getter = getattr(value, "get_secret_value", None)
+    if callable(getter):
+        return str(getter())
+    return str(value) if value is not None else ""
+
+
 def load_hot_keypair() -> Keypair:
     """Load hot payout keypair from settings (secret store). Fail closed if missing."""
-    secret = settings.SOLANA_HOT_WALLET_SECRET
+    secret = _secret_str(settings.SOLANA_HOT_WALLET_SECRET)
     if not secret or not secret.strip():
         raise RuntimeError("SOLANA_HOT_WALLET_SECRET is not configured")
     return Keypair.from_json(secret)
 
 
-def validate_solana_settings_local() -> None:
-    """Fail closed on mint/cluster mismatch and hot keypair/address mismatch (no RPC)."""
+def validate_solana_web_settings() -> None:
+    """Web-process checks: mint/cluster, cold/hot pubkeys valid and distinct (no keypair)."""
     cluster = settings.SOLANA_CLUSTER
+    if cluster == "testnet":
+        raise RuntimeError(
+            "SOLANA_CLUSTER=testnet is unsupported (no official Circle USDC mint)"
+        )
+
     expected_mint = CLUSTER_USDC_MINT.get(cluster)
-    if expected_mint is not None and settings.SOLANA_USDC_MINT != expected_mint:
+    if expected_mint is None:
+        raise RuntimeError(f"no expected USDC mint configured for cluster {cluster!r}")
+    if settings.SOLANA_USDC_MINT != expected_mint:
         raise RuntimeError(
             f"SOLANA_USDC_MINT {settings.SOLANA_USDC_MINT!r} does not match "
             f"expected mint for cluster {cluster!r} ({expected_mint})"
         )
 
+    try:
+        cold = str(Pubkey.from_string(settings.SOLANA_COLD_RECEIVE_ADDRESS))
+    except Exception as exc:
+        raise RuntimeError("SOLANA_COLD_RECEIVE_ADDRESS is not a valid pubkey") from exc
+    try:
+        hot = str(Pubkey.from_string(settings.SOLANA_HOT_WALLET_ADDRESS))
+    except Exception as exc:
+        raise RuntimeError("SOLANA_HOT_WALLET_ADDRESS is not a valid pubkey") from exc
+
+    if cold == hot:
+        raise RuntimeError(
+            "SOLANA_COLD_RECEIVE_ADDRESS and SOLANA_HOT_WALLET_ADDRESS must differ"
+        )
+
+
+def validate_solana_payout_settings() -> None:
+    """Payout/reconciler only: load hot keypair and confirm it matches the hot address."""
     keypair = load_hot_keypair()
     if str(keypair.pubkey()) != settings.SOLANA_HOT_WALLET_ADDRESS:
         raise RuntimeError(
@@ -95,17 +166,48 @@ def validate_solana_settings_local() -> None:
         )
 
 
+def validate_solana_settings_local() -> None:
+    """Backward-compatible alias: web settings only (no hot keypair load)."""
+    validate_solana_web_settings()
+
+
 async def assert_solana_cluster_matches_rpc() -> None:
-    """Confirm SOLANA_RPC_URL serves the configured SOLANA_CLUSTER (genesis hash)."""
+    """Confirm SOLANA_RPC_URL serves the configured SOLANA_CLUSTER (genesis hash).
+
+    Raises RuntimeError on mismatch or if RPC stays unreachable after retries.
+    """
     expected = CLUSTER_GENESIS_HASH[settings.SOLANA_CLUSTER]
-    async with AsyncClient(settings.SOLANA_RPC_URL) as client:
-        resp = await client.get_genesis_hash()
-    actual = str(resp.value)
-    if actual != expected:
-        raise RuntimeError(
-            f"SOLANA_RPC_URL genesis hash {actual!r} does not match "
-            f"SOLANA_CLUSTER={settings.SOLANA_CLUSTER!r} (expected {expected!r})"
-        )
+    last_error: BaseException | None = None
+
+    for attempt in range(1, _GENESIS_RETRIES + 1):
+        try:
+            async with AsyncClient(
+                settings.SOLANA_RPC_URL, timeout=_RPC_TIMEOUT_SEC
+            ) as client:
+                resp = await client.get_genesis_hash()
+            actual = str(resp.value)
+            if actual != expected:
+                raise SolanaClusterMismatchError(
+                    f"SOLANA_RPC_URL genesis hash {actual!r} does not match "
+                    f"SOLANA_CLUSTER={settings.SOLANA_CLUSTER!r} (expected {expected!r})"
+                )
+            return
+        except SolanaClusterMismatchError:
+            raise
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "solana genesis check attempt %s/%s failed: %s",
+                attempt,
+                _GENESIS_RETRIES,
+                exc,
+            )
+            if attempt < _GENESIS_RETRIES:
+                await asyncio.sleep(_GENESIS_RETRY_DELAY_SEC)
+
+    raise RuntimeError(
+        f"SOLANA_RPC_URL genesis check failed after {_GENESIS_RETRIES} attempts"
+    ) from last_error
 
 
 def account_pubkey(key: Any) -> str:
@@ -116,9 +218,22 @@ def account_pubkey(key: Any) -> str:
     return str(key)
 
 
-def full_account_keys(message: Any, meta: Any) -> list[str]:
-    """Static message keys plus ALT loaded_addresses (writable then readonly)."""
+def full_account_keys(
+    message: Any,
+    meta: Any,
+    *,
+    encoding: str = "jsonParsed",
+) -> list[str]:
+    """Build the account key list used for balance/reference lookups.
+
+    jsonParsed already expands ALT addresses into message.account_keys — do not
+    append meta.loaded_addresses (that double-counts). For json/base64 encodings,
+    append loaded writable then readonly.
+    """
     keys = [account_pubkey(k) for k in (message.account_keys or [])]
+    if encoding == "jsonParsed":
+        return keys
+
     loaded = getattr(meta, "loaded_addresses", None)
     if loaded is None:
         return keys
@@ -153,8 +268,28 @@ def _decode_memo_bytes(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def _b58decode(data: str) -> bytes:
+    """Decode Solana base58 without an extra dependency."""
+    if not data:
+        return b""
+    num = 0
+    for ch in data.encode("ascii"):
+        try:
+            num = num * 58 + _B58_INDEX[ch]
+        except KeyError as exc:
+            raise ValueError("invalid base58 character") from exc
+    combined = num.to_bytes((num.bit_length() + 7) // 8 or 1, "big")
+    pad = 0
+    for ch in data:
+        if ch == "1":
+            pad += 1
+        else:
+            break
+    return b"\x00" * pad + combined.lstrip(b"\x00")
+
+
 def _instruction_memo_text(ix: Any) -> str | None:
-    """Extract memo UTF-8 from parsed or partially-decoded instruction."""
+    """Extract memo UTF-8. Prefer jsonParsed `parsed`; raw `data` is base58 only."""
     parsed = getattr(ix, "parsed", None)
     if isinstance(ix, dict):
         parsed = ix.get("parsed", parsed)
@@ -177,20 +312,17 @@ def _instruction_memo_text(ix: Any) -> str | None:
     if isinstance(data, bytes):
         return _decode_memo_bytes(data)
     if isinstance(data, str):
-        # jsonParsed memo is usually already UTF-8 in `parsed`; `data` may be raw text
-        # or base64 (encoding=json partially-decoded). Prefer UTF-8 string as-is.
         try:
-            decoded = base64.b64decode(data, validate=True)
-            if decoded:
-                return _decode_memo_bytes(decoded)
+            return _decode_memo_bytes(_b58decode(data))
         except Exception:
-            pass
-        return data
+            # Last resort: treat as plain UTF-8 (some mock fixtures).
+            return data
     return None
 
 
-def extract_memo(message: Any, account_keys: list[str]) -> str | None:
-    """Return the first Memo program instruction payload, if any."""
+def iter_memos(message: Any, account_keys: list[str]) -> list[str]:
+    """Return every Memo program instruction payload in the message."""
+    memos: list[str] = []
     instructions = getattr(message, "instructions", None) or []
     for ix in instructions:
         program_id = _instruction_program_id(ix, account_keys)
@@ -198,8 +330,19 @@ def extract_memo(message: Any, account_keys: list[str]) -> str | None:
             continue
         memo = _instruction_memo_text(ix)
         if memo is not None:
-            return memo
-    return None
+            memos.append(memo)
+    return memos
+
+
+def extract_memo(message: Any, account_keys: list[str]) -> str | None:
+    """Return the first Memo program instruction payload, if any."""
+    memos = iter_memos(message, account_keys)
+    return memos[0] if memos else None
+
+
+def memo_matches(message: Any, account_keys: list[str], expected_memo: str) -> bool:
+    """True if any Memo instruction equals expected_memo."""
+    return expected_memo in iter_memos(message, account_keys)
 
 
 def verify_fetched_solana_transaction(
@@ -207,32 +350,37 @@ def verify_fetched_solana_transaction(
     *,
     tx_hash: str,
     expected_destination: str,
-    expected_amount_sol: Decimal,
+    expected_lamports: int,
     expected_memo: str,
     expected_reference: str,
-) -> int:
+    encoding: str = "jsonParsed",
+) -> VerifiedSolanaTx:
     """
     Verify an already-fetched getTransaction value.
-    Returns received lamports at expected_destination.
+    Returns VerifiedSolanaTx (lamports, block_time, slot, fee_payer, memo).
     """
     meta = tx.transaction.meta
     if meta is None or meta.err is not None:
         raise ValueError(f"Transaction {tx_hash} failed on-chain")
 
     message = tx.transaction.transaction.message
-    account_keys = full_account_keys(message, meta)
+    account_keys = full_account_keys(message, meta, encoding=encoding)
     pre_balances = meta.pre_balances
     post_balances = meta.post_balances
 
+    if not account_keys:
+        raise ValueError(f"Transaction {tx_hash} has no account keys")
+
     destination = str(Pubkey.from_string(expected_destination))
     reference = str(Pubkey.from_string(expected_reference))
-    expected_lamports = int(expected_amount_sol * LAMPORTS_PER_SOL)
 
     received_lamports: int | None = None
     for i, key in enumerate(account_keys):
         if key == destination:
             if i >= len(pre_balances) or i >= len(post_balances):
-                raise ValueError(f"Transaction {tx_hash} balance arrays shorter than account keys")
+                raise ValueError(
+                    f"Transaction {tx_hash} balance arrays shorter than account keys"
+                )
             received_lamports = int(post_balances[i]) - int(pre_balances[i])
             break
 
@@ -251,32 +399,43 @@ def verify_fetched_solana_transaction(
             f"Solana Pay reference {expected_reference} not found in transaction {tx_hash}"
         )
 
-    memo = extract_memo(message, account_keys)
-    if memo is None:
+    memos = iter_memos(message, account_keys)
+    if not memos:
         raise ValueError(f"Transaction {tx_hash} has no memo instruction")
-    if memo != expected_memo:
+    if expected_memo not in memos:
         raise ValueError(
-            f"Transaction {tx_hash} memo {memo!r} does not match expected {expected_memo!r}"
+            f"Transaction {tx_hash} memo(s) {memos!r} do not match expected {expected_memo!r}"
         )
 
-    return received_lamports
+    block_time = getattr(tx, "block_time", None)
+    if block_time is None:
+        block_time = getattr(tx, "blockTime", None)
+    slot = getattr(tx, "slot", None)
+
+    return VerifiedSolanaTx(
+        received_lamports=received_lamports,
+        block_time=int(block_time) if block_time is not None else None,
+        slot=int(slot) if slot is not None else None,
+        fee_payer=account_keys[0],
+        memo=expected_memo,
+    )
 
 
 async def verify_solana_transaction(
     tx_hash: str,
     expected_destination: str,
-    expected_amount_sol: Decimal,
+    expected_lamports: int,
     expected_memo: str,
     expected_reference: str,
     rpc_url: str,
-) -> int:
+) -> VerifiedSolanaTx:
     """
-    Verifies a finalized Solana deposit transaction and returns received lamports.
-    Raises ValueError with a reason if checks fail.
+    Verifies a finalized Solana deposit transaction.
+    Returns VerifiedSolanaTx. Raises ValueError with a reason if checks fail.
     """
     sig = Signature.from_string(tx_hash)
 
-    async with AsyncClient(rpc_url) as client:
+    async with AsyncClient(rpc_url, timeout=_RPC_TIMEOUT_SEC) as client:
         resp = await client.get_transaction(
             sig,
             encoding="jsonParsed",
@@ -291,9 +450,10 @@ async def verify_solana_transaction(
         resp.value,
         tx_hash=tx_hash,
         expected_destination=expected_destination,
-        expected_amount_sol=expected_amount_sol,
+        expected_lamports=expected_lamports,
         expected_memo=expected_memo,
         expected_reference=expected_reference,
+        encoding="jsonParsed",
     )
 
 
@@ -303,16 +463,21 @@ async def _classify_send_failure(
     last_valid_block_height: int,
     cause: BaseException,
 ) -> NoReturn:
-    """Raise SentUnconfirmed or SendFailedRefundable based on on-chain status."""
+    """Raise SentUnconfirmed, SendFailedOnChain, or SendFailedRefundable."""
     sig_str = str(signature)
     try:
-        status_resp = await client.get_signature_statuses([signature])
+        status_resp = await client.get_signature_statuses(
+            [signature],
+            search_transaction_history=True,
+        )
         statuses = status_resp.value or []
         on_chain = statuses[0] if statuses else None
     except Exception:
         raise SentUnconfirmed(sig_str, cause) from cause
 
     if on_chain is not None:
+        if getattr(on_chain, "err", None) is not None:
+            raise SendFailedOnChain(sig_str, cause) from cause
         raise SentUnconfirmed(sig_str, cause) from cause
 
     try:
@@ -336,19 +501,39 @@ async def build_signed_sol_transfer(
     Build and sign a SOL transfer without broadcasting.
     Returns (raw_tx_bytes, signature_base58, last_valid_block_height).
     """
+    if lamports <= 0:
+        raise ValueError("lamports must be positive")
+    if lamports < SYSTEM_ACCOUNT_RENT_EXEMPT_LAMPORTS:
+        raise ValueError(
+            f"lamports below rent-exempt minimum ({SYSTEM_ACCOUNT_RENT_EXEMPT_LAMPORTS})"
+        )
+
+    try:
+        dest_pubkey = Pubkey.from_string(destination_address)
+    except Exception as exc:
+        raise ValueError("destination must be a valid Solana public key") from exc
+
+    dest = str(dest_pubkey)
+    house = {
+        settings.SOLANA_HOT_WALLET_ADDRESS,
+        settings.SOLANA_COLD_RECEIVE_ADDRESS,
+    }
+    if dest in house:
+        raise ValueError("destination must not be a house address")
+
     sender_keypair = load_hot_keypair()
     public_key = sender_keypair.pubkey()
 
     ix = transfer(
         TransferParams(
             from_pubkey=public_key,
-            to_pubkey=Pubkey.from_string(destination_address),
+            to_pubkey=dest_pubkey,
             lamports=lamports,
         )
     )
 
     async with AsyncClient(rpc_url) as client:
-        blockhash_resp = await client.get_latest_blockhash()
+        blockhash_resp = await client.get_latest_blockhash(commitment=Confirmed)
         blockhash = blockhash_resp.value.blockhash
         last_valid_block_height = int(blockhash_resp.value.last_valid_block_height)
 
@@ -370,7 +555,8 @@ async def broadcast_and_confirm(
 ) -> str:
     """
     Broadcast a pre-signed transfer and wait for confirmation.
-    Raises SentUnconfirmed or SendFailedRefundable (never bare Exception for money paths).
+    Raises SentUnconfirmed, SendFailedOnChain, or SendFailedRefundable
+    (never bare Exception for money paths).
     """
     sig = Signature.from_string(signature)
 
@@ -395,8 +581,27 @@ async def broadcast_and_confirm(
             )
 
         try:
-            await client.confirm_transaction(sig)
+            status_resp = await client.confirm_transaction(
+                sig,
+                last_valid_block_height=last_valid_block_height,
+            )
         except Exception as e:
-            raise SentUnconfirmed(signature, e) from e
+            await _classify_send_failure(client, sig, last_valid_block_height, e)
+
+        statuses = status_resp.value or []
+        on_chain = statuses[0] if statuses else None
+        if on_chain is None:
+            raise SentUnconfirmed(
+                signature,
+                SolanaSendError("transaction status missing after confirm", signature),
+            )
+        if on_chain.err is not None:
+            raise SendFailedOnChain(
+                signature,
+                SolanaSendError(
+                    f"transaction confirmed with error: {on_chain.err}",
+                    signature,
+                ),
+            )
 
     return signature

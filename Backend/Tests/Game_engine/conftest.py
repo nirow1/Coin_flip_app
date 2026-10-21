@@ -21,9 +21,16 @@ def make_engine_with_mocks():
     mock_session.begin_nested = MagicMock(return_value=nested)
 
     mock_async_session = MagicMock(return_value=mock_session)
+
+    redis = AsyncMock()
+    # Default: no flip yet today, no existing showdown timers.
+    redis.get = AsyncMock(return_value=None)
+    redis.keys = AsyncMock(return_value=[])
+    redis.set = AsyncMock()
+
     engine = GameEngine(
         async_session=mock_async_session,
-        redis=AsyncMock(),
+        redis=redis,
         pubsub=AsyncMock(),
     )
     return engine, mock_session, mock_async_session
@@ -31,11 +38,13 @@ def make_engine_with_mocks():
 
 def make_mock_sleep(stop_at=2):
     counter = 0
+
     async def mock_sleep(seconds):
         nonlocal counter
         counter += 1
         if counter >= stop_at:
             raise asyncio.CancelledError
+
     return mock_sleep
 
 

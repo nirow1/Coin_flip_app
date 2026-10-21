@@ -1,14 +1,14 @@
 import uuid
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Column,
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
-    JSON,
-    LargeBinary,
     Numeric,
     String,
     func,
@@ -19,6 +19,7 @@ from Backend.db import Base
 from Backend.Wallet.enums import (
     Chain,
     CreditOrderStatus,
+    QuoteKind,
     TransactionType,
     UnmatchedDepositStatus,
 )
@@ -51,19 +52,6 @@ class Transaction(Base):
     wallet = relationship("Wallet", back_populates="transactions")
 
 
-class UserSolanaWallet(Base):
-    __tablename__ = "user_solana_wallets"
-
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
-
-    public_key = Column(String, nullable=False)
-    private_key_encrypted = Column(LargeBinary, nullable=False)
-
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    user = relationship("User", back_populates="solana_wallet")
-
-
 class PaymentQuote(Base):
     """Server-stored quote; clients must pass quote_id only on order/withdraw."""
 
@@ -74,10 +62,17 @@ class PaymentQuote(Base):
     payload = Column(JSON, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    chain = Column(Enum(Chain), nullable=False)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    kind = Column(Enum(QuoteKind), nullable=False)
 
 
 class CreditOrder(Base):
     __tablename__ = "credit_orders"
+    __table_args__ = (
+        Index("ix_credit_orders_user_id_status", "user_id", "status"),
+        Index("ix_credit_orders_status_expires_at", "status", "expires_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
@@ -95,10 +90,13 @@ class CreditOrder(Base):
     receive_address = Column(String, nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     paid_tx_hash = Column(String, nullable=True, unique=True)
+    received_atomic_amount = Column(BigInteger, nullable=True)
+    paid_at = Column(DateTime(timezone=True), nullable=True)
     quote_id = Column(
         String(36),
         ForeignKey("payment_quotes.id"),
-        nullable=True,
+        nullable=False,
+        unique=True,
         index=True,
     )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -111,6 +109,13 @@ class UnmatchedDeposit(Base):
     tx_hash = Column(String, nullable=False, unique=True)
     lamports = Column(BigInteger, nullable=False)
     raw_memo = Column(String, nullable=True)
+    sender = Column(String, nullable=True)
+    chain = Column(Enum(Chain), nullable=False, default=Chain.SOLANA)
+    reference_pubkey = Column(String, nullable=True)
+    block_time = Column(DateTime(timezone=True), nullable=True)
+    resolved_order_id = Column(
+        Integer, ForeignKey("credit_orders.id"), nullable=True
+    )
     status = Column(
         Enum(UnmatchedDepositStatus),
         nullable=False,

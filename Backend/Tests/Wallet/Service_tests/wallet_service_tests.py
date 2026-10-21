@@ -46,8 +46,24 @@ async def test_debiting(session, test_user, test_wallet):
 async def test_debit_insufficient_funds(session, test_user, test_wallet):
     service = WalletService(session)
 
-    with pytest.raises(HTTPException):
+    with pytest.raises(InsufficientFundsError):
         await service.debit(test_user.id, Decimal("10"))
+
+
+async def test_credit_rejects_non_positive(session, test_user, test_wallet):
+    service = WalletService(session)
+
+    with pytest.raises(ValueError, match="positive"):
+        await service.credit(test_user.id, Decimal("0"))
+    with pytest.raises(ValueError, match="positive"):
+        await service.credit(test_user.id, Decimal("-1"))
+
+
+async def test_debit_rejects_non_positive(session, test_user, test_wallet):
+    service = WalletService(session)
+
+    with pytest.raises(ValueError, match="positive"):
+        await service.debit(test_user.id, Decimal("0"))
 
 
 async def test_get_transactions(session, test_user, test_wallet):

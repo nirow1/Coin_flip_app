@@ -155,9 +155,13 @@ class AuthService:
         """Best-effort revoke: bump token_version if a cookie identifies a user."""
         payload = None
         if access_token:
-            payload = try_decode_token(access_token, settings.JWT_SECRET)
+            payload = try_decode_token(
+                access_token, settings.JWT_SECRET.get_secret_value()
+            )
         if payload is None and refresh_token:
-            payload = try_decode_token(refresh_token, settings.JWT_REFRESH_SECRET)
+            payload = try_decode_token(
+                refresh_token, settings.JWT_REFRESH_SECRET.get_secret_value()
+            )
         if payload is None:
             return False
 

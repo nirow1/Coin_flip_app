@@ -30,12 +30,43 @@ Teach like a tutor for someone coding along. Structure:
 2. **Numbered pieces** — one concern each (`## Piece A`, `## Piece B`).
 3. **Per piece / step:**
    - Plain-language job in one short paragraph
+   - **Where** — exact file path + class/function (or “new function under X”) + landmark (e.g. “inside `CreditOrder`, the existing `quote_id` column near `paid_tx_hash`”)
    - **What to write** — small copy-pasteable sketch (not a full file dump unless asked)
    - Compact table: Part/Job, Line/Meaning, or URL/Why
 4. Nested steps when one piece has phases (`### Step B1`, `B2`, …) — each step is something they can type next.
-5. **Does / does not** table when roles are easy to mix up.
+5. **Does / does not** table when roles are easy to mix up (e.g. which model owns which column).
 6. **Order in the file** — numbered list of where each block sits.
 7. **After this file** — next wire-up or smoke test (short).
+
+## Location precision (mandatory)
+
+Every edit step MUST state all of:
+
+| Field | Example |
+|---|---|
+| File | `Backend/Wallet/models.py` |
+| Target | class `CreditOrder`, column `quote_id` |
+| Landmark | “below `paid_tx_hash`, lines ~100–105 today” |
+| Action | change / add / delete / replace |
+
+Never say only “change the order link” or show a snippet under the wrong class heading. If two similar names exist (`PaymentQuote` vs `CreditOrder`), say which one explicitly and use a **Does / does not** table.
+
+For **new** endpoints or helpers: say create vs edit, full route path (including router `prefix`), function name, and which existing endpoint to mirror (e.g. “same pattern as `get_balance` in `router.py`”).
+
+## One recommended approach (no hedging)
+
+Do **not** write “put this on WalletService (or a small `quotes.py`)…”.
+
+- Prefer **one** concrete place that matches this repo’s patterns.
+- If alternatives matter, use a short table: Approach / When / **Recommend**, then write all **What to write** steps for the recommended one only.
+
+## Prerequisites and “same transaction”
+
+Do **not** assume the reader knows a prior object exists.
+
+- If a step needs an HTTP route, service method, or schema that does not exist yet, either (a) include a prior step that creates it, or (b) label the step **Later / blocked on …** and stop — do not pretend they can paste into a void.
+- If you say “inside the same DB transaction…”, define it in that step: e.g. “one request handler / one service method; do `consume_quote` and `session.add(CreditOrder(...))` before the session commits (FastAPI `get_session` commits at end of request).” Point at existing commit/session pattern in this repo when possible.
+- Placeholder payloads (`payload={...}`) must say what keys to put **now**, or mark pricing as a later piece with a minimal stub dict.
 
 ## Hard bans (the “wrong” style)
 
@@ -46,8 +77,11 @@ Do **not** answer with:
 - High-level “conceptually (not implementing)” bullet lists with no **What to write** sketches
 - Plan-doc tone: summary sections, “in short” restating the whole answer, optional deep dives instead of coding steps
 - Vague checklist only (“register callback, then bootstrap, then keep getMe thin”)
+- Ambiguous target (“change X”) without file + class/symbol
+- Hedging between files/modules without a single recommendation
+- Referring to unbuilt endpoints/transactions as if they already exist
 
-Brief context (a few lines + one existing-code cite) is fine **only** to set up the next step — then immediately go to Piece/Step + What to write.
+Brief context (a few lines + one existing-code cite) is fine **only** to set up the next step — then immediately go to Piece/Step + Where + What to write.
 
 ## Mini shape
 
@@ -55,23 +89,28 @@ Brief context (a few lines + one existing-code cite) is fine **only** to set up 
 You still need two pieces. CSRF is done.
 
 ## Piece A — …
+### Where
+`Backend/Wallet/models.py` → class `CreditOrder` → column `quote_id` (below `paid_tx_hash`)
 ### What to write
 (snippet)
 | Part | Job |
 
 ## Piece B — …
 ### Step B1 — …
-### Step B2 — …
+### Where
+…
+### What to write
+…
 
-## Order in the file
+## Order in the files
 1. …
 
-## After `client.ts` is done
+## After `models.py` is done
 …
 ```
 
 ## Style rules
 
 - Assume the reader is learning; be as clear as possible.
-- Name concrete files/symbols from this repo.
-- Do **not** edit code unless they separately ask to implement (see no-code-until-asked).
+- Name concrete files/symbols from this repo; cite real line ranges when pointing at existing code.
+- Do **not** edit application code unless they separately ask to implement (see no-code-until-asked). Updating this rules file when they ask to improve the guide is allowed.

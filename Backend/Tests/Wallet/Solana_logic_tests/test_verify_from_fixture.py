@@ -1,18 +1,19 @@
-"""Verify against a recorded-shape getTransaction JSON (ParsedAccount-style keys)."""
+"""Verify against getTransaction JSON parsed via solders (not SimpleNamespace)."""
 
 from __future__ import annotations
 
 import json
-from decimal import Decimal
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-from solana.constants import LAMPORTS_PER_SOL
+from solders.rpc.responses import GetTransactionResp
 
 from Backend.Core.core_solana import account_pubkey, verify_fetched_solana_transaction
 
-FIXTURE_PATH = Path(__file__).parent / "fixtures" / "get_transaction_deposit.json"
+FIXTURES = Path(__file__).parent / "fixtures"
+LEGACY_FIXTURE = FIXTURES / "get_transaction_deposit.json"
+REAL_FIXTURE = FIXTURES / "get_transaction_deposit_real.json"
+V0_ALT_FIXTURE = FIXTURES / "get_transaction_deposit_v0_alt.json"
 
 DESTINATION = "So11111111111111111111111111111111111111112"
 REFERENCE = "9zCtsb6bLqHbtkeKbSg4uhpjmuECo4p46yREUj5SdsjL"
@@ -20,93 +21,101 @@ MEMO = "order_ref_fixture_001"
 EXPECTED_LAMPORTS = 500_000_000
 
 
-class _ParsedAccount:
-    """Mimics solders jsonParsed account key where str(obj) is not base58."""
-
-    def __init__(self, pubkey: str, **_meta: object) -> None:
-        self.pubkey = pubkey
-
-    def __str__(self) -> str:
-        return f"ParsedAccount(pubkey={self.pubkey}, …)"
+def _rpc_value_from_result_json(result_obj: dict):
+    """Wrap a getTransaction `result` object the way JSON-RPC returns it."""
+    wrapped = json.dumps({"jsonrpc": "2.0", "id": 1, "result": result_obj})
+    resp = GetTransactionResp.from_json(wrapped)
+    assert resp.value is not None
+    return resp.value
 
 
-def _key_from_json(entry: dict | str) -> _ParsedAccount | str:
-    """Build a ParsedAccount-like object so str(key) != pubkey (regression guard)."""
-    if isinstance(entry, str):
-        return entry
-    return _ParsedAccount(**entry)
+def test_verify_from_solders_parsed_fixture():
+    """Hand-shaped fixture still validates the solders parse + verify path."""
+    payload = json.loads(LEGACY_FIXTURE.read_text(encoding="utf-8"))
+    tx = _rpc_value_from_result_json(payload)
 
+    # Regression: jsonParsed ParsedAccount-style keys must not use str(key).
+    first_key = tx.transaction.transaction.message.account_keys[0]
+    assert account_pubkey(first_key)
 
-def _ix_from_json(ix: dict) -> SimpleNamespace:
-    return SimpleNamespace(
-        program_id=ix.get("programId") or ix.get("program_id"),
-        programId=ix.get("programId"),
-        program=ix.get("program"),
-        parsed=ix.get("parsed"),
-        data=ix.get("data"),
-        accounts=ix.get("accounts"),
-        stackHeight=ix.get("stackHeight"),
-    )
-
-
-def rpc_value_from_fixture(payload: dict) -> SimpleNamespace:
-    """Adapt recorded RPC JSON into the attribute shape verify_fetched expects."""
-    message_json = payload["transaction"]["message"]
-    meta_json = payload["meta"]
-    message = SimpleNamespace(
-        account_keys=[_key_from_json(k) for k in message_json["accountKeys"]],
-        instructions=[_ix_from_json(ix) for ix in message_json["instructions"]],
-    )
-    meta = SimpleNamespace(
-        err=meta_json.get("err"),
-        pre_balances=meta_json["preBalances"],
-        post_balances=meta_json["postBalances"],
-        loaded_addresses=SimpleNamespace(
-            writable=list(meta_json.get("loadedAddresses", {}).get("writable", [])),
-            readonly=list(meta_json.get("loadedAddresses", {}).get("readonly", [])),
-        ),
-    )
-    return SimpleNamespace(
-        transaction=SimpleNamespace(
-            transaction=SimpleNamespace(message=message),
-            meta=meta,
-        )
-    )
-
-
-def test_fixture_parsed_account_pubkey_not_str():
-    payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
-    key = _key_from_json(payload["transaction"]["message"]["accountKeys"][1])
-    assert account_pubkey(key) == DESTINATION
-    assert str(key) != DESTINATION
-
-
-def test_verify_from_recorded_get_transaction_json():
-    payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
-    tx = rpc_value_from_fixture(payload)
-
-    received = verify_fetched_solana_transaction(
+    result = verify_fetched_solana_transaction(
         tx,
         tx_hash=payload["transaction"]["signatures"][0],
         expected_destination=DESTINATION,
-        expected_amount_sol=Decimal(EXPECTED_LAMPORTS) / Decimal(LAMPORTS_PER_SOL),
+        expected_lamports=EXPECTED_LAMPORTS,
         expected_memo=MEMO,
         expected_reference=REFERENCE,
     )
 
-    assert received == EXPECTED_LAMPORTS
+    assert result.received_lamports == EXPECTED_LAMPORTS
+    assert result.memo == MEMO
+    assert result.fee_payer == "J56wnxszaj6UVPigbQmBDdGSuGLnm7eSMzkkmvj6eDqU"
+    assert result.block_time == 1_715_000_000
+    assert result.slot == 312_456_789
 
 
 def test_verify_from_fixture_rejects_wrong_memo():
-    payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
-    tx = rpc_value_from_fixture(payload)
+    payload = json.loads(LEGACY_FIXTURE.read_text(encoding="utf-8"))
+    tx = _rpc_value_from_result_json(payload)
 
     with pytest.raises(ValueError, match="memo"):
         verify_fetched_solana_transaction(
             tx,
-            tx_hash="fixture_sig",
+            tx_hash=payload["transaction"]["signatures"][0],
             expected_destination=DESTINATION,
-            expected_amount_sol=Decimal("0.5"),
+            expected_lamports=EXPECTED_LAMPORTS,
             expected_memo="wrong_order_ref",
             expected_reference=REFERENCE,
         )
+
+
+@pytest.mark.skipif(
+    not REAL_FIXTURE.exists(),
+    reason="Record a real devnet deposit via Scripts/record_solana_get_transaction.py",
+)
+def test_verify_from_recorded_real_get_transaction():
+    """Requires get_transaction_deposit_real.json (full RPC result object)."""
+    meta = json.loads(REAL_FIXTURE.read_text(encoding="utf-8"))
+    # File may be {result, expected_*} or bare result.
+    if "result" in meta:
+        payload = meta["result"]
+        expected = meta.get("expected", {})
+    else:
+        payload = meta
+        expected = {}
+
+    tx = _rpc_value_from_result_json(payload)
+    result = verify_fetched_solana_transaction(
+        tx,
+        tx_hash=expected.get("tx_hash") or payload["transaction"]["signatures"][0],
+        expected_destination=expected["destination"],
+        expected_lamports=int(expected["lamports"]),
+        expected_memo=expected["memo"],
+        expected_reference=expected["reference"],
+    )
+    assert result.received_lamports >= int(expected["lamports"])
+
+
+@pytest.mark.skipif(
+    not V0_ALT_FIXTURE.exists(),
+    reason="Record a v0+ALT deposit via Scripts/record_solana_get_transaction.py",
+)
+def test_verify_from_recorded_v0_alt_get_transaction():
+    meta = json.loads(V0_ALT_FIXTURE.read_text(encoding="utf-8"))
+    if "result" in meta:
+        payload = meta["result"]
+        expected = meta.get("expected", {})
+    else:
+        payload = meta
+        expected = {}
+
+    tx = _rpc_value_from_result_json(payload)
+    result = verify_fetched_solana_transaction(
+        tx,
+        tx_hash=expected.get("tx_hash") or payload["transaction"]["signatures"][0],
+        expected_destination=expected["destination"],
+        expected_lamports=int(expected["lamports"]),
+        expected_memo=expected["memo"],
+        expected_reference=expected["reference"],
+    )
+    assert result.received_lamports >= int(expected["lamports"])

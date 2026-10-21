@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from Backend.Auth.dependencies import get_current_user
 from Backend.Auth.models import User
+from Backend.Core.exceptions import InsufficientFundsError
 from Backend.Game.service import GameService
 from Backend.Notification.service import NotificationService
 from Backend.Social.schemas import FriendResponse, UserSearchResponse
@@ -106,7 +108,7 @@ async def invite_friend_to_game(friend_id: int,
     notifications = NotificationService(session)
     try:
         success = await friend_service.invite_friend_to_game(user.id, friend_id, game_service, wallet, notifications)
-    except ValueError as e:
+    except (ValueError, InsufficientFundsError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     if not success:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Friend could not be invited")

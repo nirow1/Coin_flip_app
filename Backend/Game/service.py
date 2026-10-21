@@ -360,6 +360,13 @@ class GameService:
         result = await self.session.execute(select(Game).where(Game.status == "showdown_active").order_by(Game.id.desc()))
         return list(result.scalars().all())
 
+    async def showdown_timer_key(self, game_id: int) -> str | None:
+        """Redis TTL key for an active showdown round, or None if no survivors."""
+        players = await self._get_players_for_game(game_id)
+        if not players:
+            return None
+        return f"showdown_flip:{game_id}:{players[0].round_number}"
+
     async def get_game_status(self, game_id: int) -> str:
         game = await self._get_game_by_id(game_id, lock=False)
         return game.status

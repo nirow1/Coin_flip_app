@@ -7,13 +7,13 @@ todos:
     status: completed
   - id: phase1-tx-boundary
     content: Drop commit from _apply_transaction; engine begin_nested per game; callers own commit — prerequisite for orders + withdraw
-    status: pending
+    status: completed
   - id: phase2-orders-model
     content: CreditOrder + UnmatchedDeposit + server-side Quote; ChainAdapter; Solana adapter; Polygon stub; credits as Numeric(12,2)
-    status: pending
+    status: completed
   - id: phase3-harden-verify-send
     content: Rewrite core_solana verify (pubkey/v0/LUT/memo/finalized/delta) + send (settings keypair, typed errors, known sig before broadcast)
-    status: pending
+    status: completed
   - id: phase4-buy-solana
     content: Quote/order APIs bound by quote_id; ~5min TTL; Solana Pay QR; DepositView rewrite; swap-fee only on buy
     status: pending
@@ -52,7 +52,7 @@ Supersedes [card_to_usdc_onramp_823a5ec7.plan.md](.cursor/plans/card_to_usdc_onr
 | Fees                  | Buy: swap estimate + spread. Withdraw: network + ATA creation if needed + spread. Never trust client amounts                                                    |
 | Withdraw v1           | User picks **SOL** or **USDC** (SPL) to a destination they own; house sends from hot inventory                                                                  |
 | Withdraw later        | MATIC / Polygon USDC when Polygon adapter ships                                                                                                                 |
-| Per-user deposit keys | **Not used**; delete / stop using [UserSolanaWallet](Backend/Wallet/models.py) for deposits                                                                     |
+| Per-user deposit keys | **Removed** — `user_solana_wallets` dropped (migration `e1f2a3b4c5d6`); cold receive + hot payout only                                                                 |
 
 
 ```mermaid

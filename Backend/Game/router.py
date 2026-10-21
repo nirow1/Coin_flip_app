@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from Backend.Auth.dependencies import get_current_admin, get_current_user
 from Backend.Auth.models import User
 from Backend.Core.core_redis import get_redis
+from Backend.Core.exceptions import InsufficientFundsError
 from Backend.db import get_session
 from Backend.Game.schemas import GamePlayerResponse, GameResponse, MyGameItemResponse
 from Backend.Game.service import GameService
@@ -23,7 +24,7 @@ async def join_game(side: str,
     game_service = GameService(session)
     try:
         (player, game) = await game_service.join_game(user.id, side, wallet_service, redis_client)
-    except ValueError as e:
+    except (ValueError, InsufficientFundsError) as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     return {"player": GamePlayerResponse.model_validate(player), "game": GameResponse.model_validate(game)}
 
