@@ -9,11 +9,11 @@ from Backend.Core.core_redis import get_redis
 from Backend.db import get_session
 from Backend.Wallet.enums import Chain
 from Backend.Wallet.schemas import (
+    QUOTE_RATE_LIMIT,
+    QUOTE_RATE_WINDOW_SEC,
     BalanceResponse,
     CreditsQuoteRequest,
     CreditsQuoteResponse,
-    QUOTE_RATE_LIMIT,
-    QUOTE_RATE_WINDOW_SEC,
     SolanaWebhookPayload,
     TransactionResponse,
 )
@@ -114,5 +114,6 @@ async def create_buy_quote(
         user_id=current_user.id,
         credits=body.credits,
         chain=body.chain,
+        redis=redis,
     )
     return CreditsQuoteResponse(quote_id=quote.id, expires_at=quote.expires_at)

@@ -6,13 +6,15 @@ from decimal import Decimal
 from typing import cast
 
 from fastapi import HTTPException, status
+from redis.asyncio import Redis
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from Backend.Core.exceptions import InsufficientFundsError
 from Backend.config import settings
+from Backend.Core.exceptions import InsufficientFundsError
 from Backend.Wallet.enums import Chain, QuoteKind, TransactionType
 from Backend.Wallet.models import PaymentQuote, Transaction, Wallet
+from Backend.Wallet.pricing import quote_buy_lamports
 
 logger = logging.getLogger(__name__)
 
@@ -142,13 +144,21 @@ class WalletService:
             tx_signature,
         )
 
-    async def create_buy_quote(self, user_id: int, credits: int, chain: Chain) -> PaymentQuote:
+    async def create_buy_quote(self, user_id: int, credits: int, chain: Chain, redis: Redis) -> PaymentQuote:
+        priced = await quote_buy_lamports(credits, redis)
         now = datetime.now(UTC)
         quote = PaymentQuote(
             user_id=user_id,
             kind=QuoteKind.BUY,
             chain=chain,
-            payload={"credits": credits, "chain": chain.value},  # expand when pricing exists
+            payload={
+                "credits": credits,
+                "chain": chain.value,
+                "lamports": priced["lamports"],
+                "price": priced["price"],
+                "fee": priced["fee"],
+                "price_source": priced["price_source"],
+            },
             expires_at=now + timedelta(minutes=5),
         )
         self.session.add(quote)
