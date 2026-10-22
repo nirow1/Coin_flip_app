@@ -64,8 +64,15 @@ async def lifespan(app: FastAPI):
     pubsub = redis_client.pubsub()
     engine = GameEngine(SessionLocal, redis_client, pubsub)
     lock = LeaderLock(redis_client, key="scheduler:leader", ttl_ms=10_000)
-    leader_task = asyncio.create_task(run_if_leader(lock, engine))
-
+    leader_task = asyncio.create_task(
+        run_if_leader(
+                        lock,
+                        [
+                            engine.daily_scheduler,
+                            engine.showdown_scheduler
+                        ]
+                    )
+                )
     yield
 
     # Cancel schedulers on shutdown; run_if_leader releases the lock if we hold it.

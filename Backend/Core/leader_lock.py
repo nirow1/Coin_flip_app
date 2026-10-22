@@ -1,10 +1,12 @@
 import asyncio
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 
 import redis
 
-from Backend.Game.engine import GameEngine
+SchedulerFactory = Callable[[], Awaitable[None]]
+
 
 logger = logging.getLogger(__name__)
 
@@ -106,18 +108,16 @@ async def _run_scheduler_after_delay(factory, delay_s: float | None = None):
     await factory()
 
 
-async def run_if_leader(lock: LeaderLock, engine: GameEngine):
+async def run_if_leader(lock: LeaderLock, factories: list[SchedulerFactory]):
     keep_alive_task = None
-    daily_task = None
-    showdown_task = None
+    scheduler_tasks: list[asyncio.Task|None] = []
 
     try:
         while True:
             if await lock.acquire():
                 lock.is_locked = True
                 keep_alive_task = asyncio.create_task(lock.keep_alive())
-                daily_task = asyncio.create_task(engine.daily_scheduler())
-                showdown_task = asyncio.create_task(engine.showdown_scheduler())
+                scheduler_tasks = [asyncio.create_task(factory()) for factory in factories]
 
                 # Wait until leadership is lost. Restart a scheduler if it dies
                 # while we still hold the lock (with a short backoff to avoid
@@ -125,7 +125,7 @@ async def run_if_leader(lock: LeaderLock, engine: GameEngine):
                 while lock.is_locked:
                     watched = [
                         t
-                        for t in (keep_alive_task, daily_task, showdown_task)
+                        for t in (keep_alive_task, *scheduler_tasks)
                         if t is not None
                     ]
                     done, _ = await asyncio.wait(
@@ -136,44 +136,33 @@ async def run_if_leader(lock: LeaderLock, engine: GameEngine):
                     if keep_alive_task in done:
                         break
 
-                    if daily_task in done:
-                        if not daily_task.cancelled():
-                            exc = daily_task.exception()
+                    for i, task in enumerate(scheduler_tasks):
+                        if task is None or task not in done:
+                            continue
+                        if not task.cancelled():
+                            exc = task.exception()
                             if exc is not None:
                                 logger.exception(
-                                    "daily_scheduler died; restarting",
+                                    f"scheduler {i} died; restarting",
                                     exc_info=exc,
                                 )
-                        daily_task = asyncio.create_task(
-                            _run_scheduler_after_delay(engine.daily_scheduler)
+                        scheduler_tasks[i] = asyncio.create_task(
+                            _run_scheduler_after_delay(factories[i])
                         )
 
-                    if showdown_task in done:
-                        if not showdown_task.cancelled():
-                            exc = showdown_task.exception()
-                            if exc is not None:
-                                logger.exception(
-                                    "showdown_scheduler died; restarting",
-                                    exc_info=exc,
-                                )
-                        showdown_task = asyncio.create_task(
-                            _run_scheduler_after_delay(engine.showdown_scheduler)
-                        )
 
                 # Lost the lock — cancel scheduler tasks.
-                tasks = [t for t in (daily_task, showdown_task) if t is not None and not t.done()]
-                for t in tasks:
+                to_cancel = [t for t in scheduler_tasks if t is not None and not t.done()]
+                for t in to_cancel:
                     t.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
-
-                daily_task = None
-                showdown_task = None
+                await asyncio.gather(*to_cancel, return_exceptions=True)
+                scheduler_tasks = []
                 keep_alive_task = None
             else:
                 await asyncio.sleep(5)
     except asyncio.CancelledError:
         # Ensure shutdown doesn't orphan child tasks.
-        tasks = [t for t in (keep_alive_task, daily_task, showdown_task) if t is not None]
+        tasks = [t for t in (keep_alive_task, *scheduler_tasks) if t is not None]
         for t in tasks:
             if not t.done():
                 t.cancel()
