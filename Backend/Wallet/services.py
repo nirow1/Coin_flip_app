@@ -1,22 +1,28 @@
 import hashlib
 import hmac
 import logging
+import secrets
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import cast
+from urllib.parse import urlencode
 
 from fastapi import HTTPException, status
 from redis.asyncio import Redis
-from sqlalchemy import select, update
+from solders.keypair import Keypair
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from Backend.config import settings
 from Backend.Core.exceptions import InsufficientFundsError
-from Backend.Wallet.enums import Chain, QuoteKind, TransactionType
-from Backend.Wallet.models import PaymentQuote, Transaction, Wallet
+from Backend.Wallet.enums import Chain, CreditOrderStatus, QuoteKind, TransactionType
+from Backend.Wallet.models import CreditOrder, PaymentQuote, Transaction, Wallet
 from Backend.Wallet.pricing import quote_buy_lamports
+from Backend.Wallet.schemas import MAX_PENDING_CREDIT_ORDERS
 
 logger = logging.getLogger(__name__)
+
+LAMPORTS_PER_SOL = Decimal("1000000000")
 
 
 class WalletService:
@@ -183,16 +189,88 @@ class WalletService:
                 PaymentQuote.expires_at > now,
             )
             .values(consumed_at=now)
-            .returning(PaymentQuote.payload)
+            .returning(PaymentQuote.payload, PaymentQuote.expires_at)
         )
         result = await self.session.execute(stmt)
-        payload = result.scalar_one_or_none()
-        if payload is None:
+        row = result.one_or_none()
+        if row is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Quote invalid, expired, or already used",
             )
-        return payload
+        payload, expires_at = row
+        return {"payload": payload, "expires_at": expires_at}
+
+    async def create_credit_order(self, *, user_id: int, quote_id: str) -> CreditOrder:
+        consumed = await self.consume_quote(
+            quote_id=quote_id,
+            user_id=user_id,
+            kind=QuoteKind.BUY,
+        )
+        payload = consumed["payload"]
+        expires_at = consumed["expires_at"]
+
+        pending = await self.session.scalar(
+            select(func.count())
+            .select_from(CreditOrder)
+            .where(
+                CreditOrder.user_id == user_id,
+                CreditOrder.status == CreditOrderStatus.PENDING,
+            )
+        )
+        if (pending or 0) >= MAX_PENDING_CREDIT_ORDERS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Maximum number of pending credit orders reached",
+            )
+
+        reference_pubkey = str(Keypair().pubkey())
+        order_ref = secrets.token_urlsafe(16)
+
+        order = CreditOrder(
+            user_id=user_id,
+            credits=Decimal(str(payload["credits"])),
+            chain=Chain(payload["chain"]),
+            status=CreditOrderStatus.PENDING,
+            order_ref=order_ref,
+            reference_pubkey=reference_pubkey,
+            quoted_atomic_amount=int(payload["lamports"]),
+            receive_address=settings.SOLANA_COLD_RECEIVE_ADDRESS,
+            expires_at=expires_at,
+            quote_id=quote_id,
+        )
+
+        self.session.add(order)
+        await self.session.flush()
+        await self.session.refresh(order)
+        return order
+
+    def _order_payment_fields(self, order: CreditOrder) -> dict:
+        amount_sol = str(Decimal(order.quoted_atomic_amount) / LAMPORTS_PER_SOL)
+        query = urlencode(
+            {
+                "amount": amount_sol,
+                "reference": order.reference_pubkey,
+                "memo": order.order_ref,
+            }
+        )
+        solana_pay_url = f"solana:{order.receive_address}?{query}"
+        return {"amount_sol": amount_sol, "solana_pay_url": solana_pay_url}
+
+    async def get_credit_order_for_owner(self, *, user_id: int, order_id: int) -> CreditOrder:
+        result = await self.session.execute(
+            select(CreditOrder).where(
+                CreditOrder.id == order_id,
+                CreditOrder.user_id == user_id,
+            )
+        )
+        order = result.scalar_one_or_none()
+        if order is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Credit order not found",
+            )
+        return order
 
     async def credit(self, user_id: int, amount: Decimal, transaction_type: TransactionType = TransactionType.CREDIT, tx_hash: str | None = None) -> Transaction:
         if amount <= 0:

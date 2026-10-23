@@ -12,8 +12,11 @@ from Backend.Wallet.schemas import (
     QUOTE_RATE_LIMIT,
     QUOTE_RATE_WINDOW_SEC,
     BalanceResponse,
+    CreateOrderRequest,
+    CreateOrderResponse,
     CreditsQuoteRequest,
     CreditsQuoteResponse,
+    OrderStatusResponse,
     SolanaWebhookPayload,
     TransactionResponse,
 )
@@ -117,3 +120,49 @@ async def create_buy_quote(
         redis=redis,
     )
     return CreditsQuoteResponse(quote_id=quote.id, expires_at=quote.expires_at)
+
+
+@router.post("/credits/orders", response_model=CreateOrderResponse)
+async def create_credit_order(
+    body: CreateOrderRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_solana_payments),
+):
+    wallet_service = WalletService(session)
+    order = await wallet_service.create_credit_order(
+        user_id=current_user.id,
+        quote_id=str(body.quote_id),
+    )
+    fields = wallet_service._order_payment_fields(order)
+    return CreateOrderResponse(
+        order_id=order.id,
+        receive_address=order.receive_address,
+        amount_sol=fields["amount_sol"],
+        reference=order.reference_pubkey,
+        memo=order.order_ref,
+        expires_at=order.expires_at,
+        solana_pay_url=fields["solana_pay_url"],
+    )
+
+
+@router.get("/credits/orders/{order_id}", response_model=OrderStatusResponse)
+async def get_credit_order(
+    order_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_solana_payments),
+) -> OrderStatusResponse:
+    wallet_service = WalletService(session)
+    order = await wallet_service.get_credit_order_for_owner(
+        order_id=order_id,
+        user_id=current_user.id,
+    )
+    return OrderStatusResponse(
+        order_id=order.id,
+        status=order.status.value,
+        credits=order.credits,
+        expires_at=order.expires_at,
+        paid_tx_hash=order.paid_tx_hash,
+    )
+                               

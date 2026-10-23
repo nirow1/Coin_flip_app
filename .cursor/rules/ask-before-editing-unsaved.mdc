@@ -1,0 +1,25 @@
+---
+description: If disk does not show expected edits, assume the user has not saved — ask before writing code
+alwaysApply: true
+---
+
+# Ask before editing when changes are not on disk
+
+File tools (`Read`, `Grep`, patches) see **saved files on disk**, not unsaved editor buffers.
+
+## When this applies
+
+After a review, “I fixed it”, or similar — you re-read the file and the expected edits are **missing** or the code still matches the broken version you just reported.
+
+Treat that as: **the user likely did not save** (or an unsaved buffer overwrote disk later). Do **not** assume they ignored the feedback.
+
+## Required behavior
+
+1. **Stop** — do not patch or rewrite the file yet.
+2. **Ask** something like: “I still see the old code on disk — please save the file(s), or say if you want me to apply the fixes.”
+3. Only write code after they confirm (save and re-review, or explicit “apply / fix it / do the changes”).
+
+## Do not
+
+- Silently re-apply a large fix set because disk looks unchanged
+- Treat “no change on disk” as “user refused to fix” without asking

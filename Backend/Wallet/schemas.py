@@ -13,6 +13,7 @@ from Backend.Wallet.enums import Chain, WithdrawAsset
 MAX_BUY_CREDITS = 10000
 MIN_WITHDRAW_CREDITS = Decimal("10.0")
 MAX_WITHDRAW_CREDITS = Decimal("10000.00")
+MAX_PENDING_CREDIT_ORDERS = 3
 WEBHOOK_MAX_SKEW_SECONDS = 300
 QUOTE_RATE_LIMIT = 10
 QUOTE_RATE_WINDOW_SEC = 60
@@ -115,3 +116,21 @@ class WithdrawRequest(BaseModel):
 
     quote_id: UUID
     idempotency_key: str = Field(min_length=16, max_length=64)
+
+
+class CreateOrderResponse(BaseModel):
+    order_id: int
+    receive_address: str
+    amount_sol: str
+    reference: str
+    memo: str
+    expires_at: datetime
+    solana_pay_url: str
+
+
+class OrderStatusResponse(BaseModel):
+    order_id: int
+    status: str
+    credits: Decimal
+    expires_at: datetime
+    paid_tx_hash: str | None = None
