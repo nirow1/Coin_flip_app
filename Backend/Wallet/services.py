@@ -8,21 +8,40 @@ from typing import cast
 from urllib.parse import urlencode
 
 from fastapi import HTTPException, status
+from httpx import AsyncClient
 from redis.asyncio import Redis
+from solana.rpc.commitment import Finalized
 from solders.keypair import Keypair
+from solders.signature import Signature
+from solders.solders import Pubkey
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from Backend.config import settings
+from Backend.Core.core_solana import (
+    full_account_keys,
+    iter_memos,
+    verify_fetched_solana_transaction,
+)
 from Backend.Core.exceptions import InsufficientFundsError
 from Backend.Wallet.enums import Chain, CreditOrderStatus, QuoteKind, TransactionType
-from Backend.Wallet.models import CreditOrder, PaymentQuote, Transaction, Wallet
+from Backend.Wallet.models import (
+    ChainCursor,
+    CreditOrder,
+    PaymentQuote,
+    Transaction,
+    UnmatchedDeposit,
+    Wallet,
+)
 from Backend.Wallet.pricing import quote_buy_lamports
 from Backend.Wallet.schemas import MAX_PENDING_CREDIT_ORDERS
 
 logger = logging.getLogger(__name__)
 
-LAMPORTS_PER_SOL = Decimal("1000000000")
+LAMPORTS_PER_SOL = Decimal(1000000000)
+_RPC_TIMEOUT_SEC = 10
+OVERPAY_MAX_RATIO = Decimal("1.05")
 
 
 class WalletService:
@@ -139,16 +158,8 @@ class WalletService:
             )
 
     async def process_solana_webhook(self, tx_signature: str) -> None:
-        """Ack Solana deposit webhooks. Payload is signature-only; never 404.
-
-        CreditOrder matching + RPC verify land in later phases. Until then,
-        unknown/unmatched signatures are logged and acknowledged with 200 so
-        providers do not retry-storm.
-        """
-        logger.info(
-            "solana webhook unmatched signature=%s (CreditOrder matching not wired yet)",
-            tx_signature,
-        )
+        """Signature-only webhook: always ack; matching/credit happen here."""
+        await self.process_deposit_signature(tx_signature)
 
     async def create_buy_quote(self, user_id: int, credits: int, chain: Chain, redis: Redis) -> PaymentQuote:
         priced = await quote_buy_lamports(credits, redis)
@@ -271,6 +282,149 @@ class WalletService:
                 detail="Credit order not found",
             )
         return order
+
+    async def process_deposit_signature(self, tx_signature: str) -> None:
+        tx = await self._fetch_finalized_tx(tx_signature)
+        if tx is None:
+            return
+            
+
+        account_keys, memos = self._tx_account_keys_and_memos(tx)
+        lamports = self._cold_lamports_delta(tx, account_keys) 
+        order = await self._find_order_for_tx(account_keys, memos)
+
+        if order is None:
+            block_time_raw = getattr(tx, "block_time", None) or getattr(tx, "blockTime", None)
+            block_time = (
+                datetime.fromtimestamp(int(block_time_raw), UTC) 
+                if block_time_raw is not None
+                else None
+            )
+            self.session.add(ChainCursor(
+                UnmatchedDeposit(
+                    tx_hash=tx_signature,
+                    lamports=lamports,
+                    raw_memo=memos[0] if memos else None,
+                    sender=account_keys[0]if account_keys else None,
+                    chain=Chain.SOLANA,
+                    reference_key=None,
+                    block_time=block_time,
+                )
+            ))
+            try:
+                await self.session.flush()
+            except IntegrityError:
+                await self.session.rollback()
+            return
+    
+        locked = await self.session.execute(
+            select(CreditOrder)
+            .where(CreditOrder.id == order.id)
+            .with_for_update()
+        )
+        order = locked.scalar_one()
+
+        if order.paid_tx_hash == tx_signature or order.status == CreditOrderStatus.PAID:
+            return
+        
+        verified = verify_fetched_solana_transaction(
+            tx,
+            tx_hash=tx_signature, 
+            expected_destination=order.receive_address, 
+            expected_lamports=lamports, 
+            expected_memo=order.order_ref, 
+            expected_reference=order.reference_pubkey
+        )
+
+        order.received_atomic_amount = verified.received_lamports
+
+        quated = int(order.quoted_atomic_amount)
+        received = int(verified.received_lamports)
+        max_ok = int(Decimal(quated) * OVERPAY_MAX_RATIO)
+
+        paid_at_block = (
+            datetime.fromtimestamp(verified.block_time, UTC)
+            if verified.block_time is not None
+            else None
+        )
+        expires_at = order.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+
+        late = paid_at_block is not None and  paid_at_block > expires_at
+        under = received < quated
+        over = received > max_ok
+
+        if under or over or late or order.status != CreditOrderStatus.PENDING:
+            order.status = CreditOrderStatus.NEEDS_REVIEW
+            if under:
+                order.review_reason = "underpaid"
+            if over:
+                order.review_reason = "overpaid"
+            if late:
+                order.review_reason = "late"
+            else:
+                order.review_reason = "unexpected_status:{order.status.value}"
+            return
+
+        order.status = CreditOrderStatus.PAID
+        order.paid_tx_hash = tx_signature
+        order.paid_at = datetime.now(UTC)
+        try:
+            await self.session.credit(
+                order.user_id,
+                Decimal(order.credits),
+                TransactionType.PURCHASE,
+                tx_hash=tx_signature,
+            )
+            await self.session.flush()
+        except IntegrityError:
+            await self.session.rollback()
+
+    async def _fetch_finalized_tx(self, tx_signature: str):
+        async with AsyncClient(endpoint=settings.SOLANA_RPC_URL, timeout=_RPC_TIMEOUT_SEC) as client:
+            resp = await client.get_transaction(
+                Signature.from_string(tx_signature),
+                encoding="jsonParsed",
+                commitment=Finalized,
+                max_supported_transaction_version=0
+            )
+        return resp.value
+
+    async def _find_order_for_tx(self, account_keys: list[str], memos: list[str]) -> CreditOrder | None:
+        order = await self.session.execute(
+            select(CreditOrder)
+            .where(CreditOrder.reference_pubkey.in_(account_keys))
+            .order_by(CreditOrder.id.asc())
+            .limit(1)
+        )
+        order = order.scalar_one_or_none()
+        if order is None:
+            return None
+        if not memos:
+            return None
+        result = await self.session.execute(
+            select(CreditOrder)
+            .where(CreditOrder.order_ref.in_(memos))
+            .order_by(CreditOrder.id.asc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+    
+    def _tx_account_keys_and_memos(self, tx: dict) -> list[str]:
+        meta = tx.transaction.meta
+        message = tx.transaction.transaction.message
+        keys = full_account_keys(message, meta, encoding="jsonParsed")
+        memos = iter_memos(message, keys)
+        return keys, memos
+    
+    def _cold_lamports_delta(self, tx, account_keys: list[str]) -> int:
+        cold = str(Pubkey.from_string(settings.SOLANA_COLD_RECEIVE_ADDRESS))
+        meta = tx.transaction.meta
+        for i,key in enumerate(account_keys):
+            if key == cold:
+                return int(meta.post_balances[i] - int(meta.pre_balances[i]))
+        return 0
 
     async def credit(self, user_id: int, amount: Decimal, transaction_type: TransactionType = TransactionType.CREDIT, tx_hash: str | None = None) -> Transaction:
         if amount <= 0:

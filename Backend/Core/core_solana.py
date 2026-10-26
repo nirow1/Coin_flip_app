@@ -388,11 +388,7 @@ def verify_fetched_solana_transaction(
         raise ValueError(
             f"Destination address {expected_destination} not found in transaction {tx_hash}"
         )
-    if received_lamports < expected_lamports:
-        raise ValueError(
-            f"Transaction {tx_hash} credited only {received_lamports} lamports, "
-            f"expected at least {expected_lamports}"
-        )
+
 
     if reference not in account_keys:
         raise ValueError(

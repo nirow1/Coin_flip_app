@@ -92,6 +92,7 @@ class CreditOrder(Base):
     paid_tx_hash = Column(String, nullable=True, unique=True)
     received_atomic_amount = Column(BigInteger, nullable=True)
     paid_at = Column(DateTime(timezone=True), nullable=True)
+    review_reason = Column(String, nullable=True)
     quote_id = Column(
         String(36),
         ForeignKey("payment_quotes.id"),
@@ -122,3 +123,12 @@ class UnmatchedDeposit(Base):
         default=UnmatchedDepositStatus.OPEN,
     )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ChainCursor(Base):
+    __tablename__ = "chain_cursors"
+
+    chain = Column(Enum(Chain), primary_key=True)
+    last_signature = Column(String, nullable=True)
+    last_block = Column(BigInteger, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

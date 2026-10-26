@@ -27,16 +27,35 @@ Use this format when the user asks for any of:
 Teach like a tutor for someone coding along. Structure:
 
 1. **Short opener** — what’s already done vs what they still need (one or two sentences). No long “problem essay.”
-2. **Numbered pieces** — one concern each (`## Piece A`, `## Piece B`).
-3. **Per piece / step:**
+2. **Scope** — if the ask is small (≈1–2 pieces, ≤~3 **What to write** blocks), put them in one reply. If it is larger, use **Long guides (multi-turn)** below instead of dumping every piece.
+3. **Per piece / step** (only for the piece(s) in *this* reply):
    - Plain-language job in one short paragraph
    - **Where** — exact file path + class/function (or “new function under X”) + landmark (e.g. “inside `CreditOrder`, the existing `quote_id` column near `paid_tx_hash`”)
-   - **What to write** — small copy-pasteable sketch (not a full file dump unless asked)
+   - **What to write** — real code the reader can type or paste (signatures, bodies, SQLAlchemy stmts). Not a full file dump unless asked — but **every** step that changes code must include a sketch with working syntax, not comments that narrate the algorithm.
    - Compact table: Part/Job, Line/Meaning, or URL/Why
-4. Nested steps when one piece has phases (`### Step B1`, `B2`, …) — each step is something they can type next.
+4. Nested steps when one piece has phases (`### Step B1`, `B2`, …) — each step is something they can type next. If one function is large, **split into more steps or more turns** (helpers first, then the orchestrator), each with its own **What to write**. Do **not** collapse a large step into a numbered “flow” instead of code.
 5. **Does / does not** table when roles are easy to mix up (e.g. which model owns which column).
-6. **Order in the file** — numbered list of where each block sits.
-7. **After this file** — next wire-up or smoke test (short).
+6. **Order in the file** — numbered list of where each block in *this* reply sits.
+7. **Checkpoint** — what “done” looks like for this turn, and what to ask for next (or a short smoke test if this was the last piece).
+
+## Long guides (multi-turn)
+
+When a plan slice or ask would need more than ~2–3 **What to write** blocks (e.g. Part E: schema + verify soften + deposit processor + poller + expiry + adapter), **do not** put every sketch in one reply. Combine:
+
+1. **Menu** — short map of pieces only (title + one-line job each). No architecture essay; no sketch-free “how it works” checklist pretending to be the guide.
+2. **One piece per reply** (default), or **one nested step per reply** if that piece alone is large (e.g. C1 helpers, then C2 orchestrator).
+3. **Full tutor format for the current slice only** — Where + What to write + table. Later pieces stay names on the menu until the user asks for them.
+4. **Checkpoint** — end with: after X is in / compiles / wired, ask for Piece N (or Step Cn). Do not pre-dump N+1’s sketches “for later.”
+
+First reply pattern: menu + either (a) the first unfinished piece with full sketches, or (b) ask which piece they want if order is flexible.
+
+Follow-up replies: skip re-explaining the whole menu; one sentence of context → current piece’s Where + What to write → next checkpoint.
+
+| Do | Do not |
+|---|---|
+| Menu + current piece sketches | One mega-reply with every piece’s code |
+| Split across turns when long | Replace sketches with a prose “flow to implement” to save space |
+| Checkpoint, wait for “next” | Sketch-free overview of all pieces as the only answer |
 
 ## Location precision (mandatory)
 
@@ -80,33 +99,60 @@ Do **not** answer with:
 - Ambiguous target (“change X”) without file + class/symbol
 - Hedging between files/modules without a single recommendation
 - Referring to unbuilt endpoints/transactions as if they already exist
+- **“Flow to implement” / numbered prose algorithm** in place of **What to write** (e.g. “1. Fetch… 2. Match… 3. Lock…” with no pasteable function body). That is a plan-doc checklist, not a tutor step.
+- **Comment-only sketches** inside a **What to write** block (e.g. `# get_transaction(...); # find order by reference`). Narrating RPC/DB steps in comments is not code the reader can type.
+- **Skipping or thinning What to write because the function is long or “obvious.”** Length is a reason to add Step C1/C2/C3 with smaller sketches, never to replace sketches with a summary.
 
 Brief context (a few lines + one existing-code cite) is fine **only** to set up the next step — then immediately go to Piece/Step + Where + What to write.
 
-## Mini shape
+## Pre-send check (mandatory)
+
+Before sending a step-by-step answer, verify each edit step has all four: **Where** (file + target + landmark + action) and a **What to write** block that contains real syntax (defs, assigns, awaits) — not only bullets or `# comments`. If any step fails that check, rewrite that step before sending. Do not “compress for readability” by dropping sketches.
+
+## Mini shape (short — fits one reply)
 
 ```markdown
 You still need two pieces. CSRF is done.
 
 ## Piece A — …
 ### Where
-`Backend/Wallet/models.py` → class `CreditOrder` → column `quote_id` (below `paid_tx_hash`)
+…
 ### What to write
 (snippet)
-| Part | Job |
 
 ## Piece B — …
-### Step B1 — …
 ### Where
 …
 ### What to write
 …
 
-## Order in the files
-1. …
+## Checkpoint
+After both are in: …
+```
 
-## After `models.py` is done
+## Mini shape (long — first turn)
+
+```markdown
+Part E is four pieces. Schema is done.
+
+| Piece | Job |
+|---|---|
+| C | `process_deposit_signature` + webhook |
+| D | Cold poller + cursor |
+| E | Order expiry job |
+| F | SolanaAdapter wrappers |
+
+Starting with **Piece C** (say if you want D first).
+
+## Piece C — …
+### Step C1 — …
+### Where
 …
+### What to write
+(snippet)
+
+## Checkpoint
+When webhook calls `process_deposit_signature` and imports clean, ask for Piece D.
 ```
 
 ## Style rules
