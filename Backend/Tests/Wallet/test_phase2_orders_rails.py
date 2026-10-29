@@ -1,5 +1,5 @@
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -148,7 +148,46 @@ async def test_polygon_adapter_raises_not_implemented():
 
 
 @pytest.mark.asyncio
-async def test_solana_adapter_stub_raises_not_implemented():
+async def test_solana_adapter_quote_native_delegates_to_pricing():
     adapter = get_adapter(Chain.SOLANA)
-    with pytest.raises(NotImplementedError):
-        await adapter.quote_native()
+    redis = AsyncMock()
+    priced = {
+        "lamports": 1_000_000_000,
+        "price": "100.0",
+        "fee": "0.015",
+        "price_source": "pyth:SOL/USD",
+    }
+    with patch(
+        "Backend.Wallet.rails.solana.quote_buy_lamports",
+        new_callable=AsyncMock,
+        return_value=priced,
+    ) as quote:
+        result = await adapter.quote_native(credits=10, redis=redis)
+
+    quote.assert_awaited_once_with(10, redis)
+    assert result == priced
+
+
+@pytest.mark.asyncio
+async def test_solana_adapter_verify_deposit_delegates_to_wallet_service():
+    adapter = get_adapter(Chain.SOLANA)
+    session = MagicMock()
+    with patch(
+        "Backend.Wallet.rails.solana.WalletService"
+    ) as service_cls:
+        service_cls.return_value.process_deposit_signature = AsyncMock()
+        await adapter.verify_deposit(session=session, signature="sig123")
+
+    service_cls.assert_called_once_with(session)
+    service_cls.return_value.process_deposit_signature.assert_awaited_once_with(
+        "sig123"
+    )
+
+
+@pytest.mark.asyncio
+async def test_solana_adapter_send_still_not_implemented():
+    adapter = get_adapter(Chain.SOLANA)
+    with pytest.raises(NotImplementedError, match="send_native"):
+        await adapter.send_native()
+    with pytest.raises(NotImplementedError, match="send_usdc"):
+        await adapter.send_usdc()

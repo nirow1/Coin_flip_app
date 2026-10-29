@@ -8,7 +8,8 @@ from Backend.Core.core_solana import (
 )
 from Backend.Core.leader_lock import LeaderLock, run_if_leader
 from Backend.Core.redis_config import create_redis_client
-from Backend.db import init_db
+from Backend.db import SessionLocal, init_db
+from Backend.Wallet.jobs import run_cold_deposit_poller, run_order_expiry_job
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +24,15 @@ async def main() -> None:
     redis_client = await create_redis_client()
     lock = LeaderLock(redis_client, key="payments:leader", ttl_ms=10_000)
 
-    # Piece B shell: empty until E (poller/expiry) and G (withdraw) exist.
-    factories: list = []
+    factories = [
+        lambda: run_cold_deposit_poller(SessionLocal),
+        lambda: run_order_expiry_job(SessionLocal),
+    ]
 
     leader_task = asyncio.create_task(run_if_leader(lock, factories))
     try:
         await leader_task
-    except asyncio.CancelledError:
+    except asyncio.CancelledError:  # noqa: TRY203
         raise
     finally:
         if not leader_task.done():

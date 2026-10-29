@@ -49,7 +49,8 @@ async def test_worker_main_validates_payout_settings_and_uses_payments_leader_ke
         genesis.assert_awaited_once_with()
         init_db.assert_awaited_once_with()
         assert seen["lock_key"] == "payments:leader"
-        assert seen["factories"] == []
+        assert len(seen["factories"]) == 2
+        assert all(callable(f) for f in seen["factories"])
 
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
