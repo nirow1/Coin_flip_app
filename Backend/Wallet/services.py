@@ -355,6 +355,8 @@ class WalletService:
 
         if under or over or late or order.status != CreditOrderStatus.PENDING:
             order.status = CreditOrderStatus.NEEDS_REVIEW
+            order.paid_tx_hash = tx_signature
+            order.paid_at = paid_at_block or datetime.now(UTC)
             if under:
                 order.review_reason = "underpaid"
             elif over:

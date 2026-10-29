@@ -1,9 +1,10 @@
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from solders.pubkey import Pubkey
 from solders.signature import Signature
 
@@ -134,3 +135,71 @@ class OrderStatusResponse(BaseModel):
     credits: Decimal
     expires_at: datetime
     paid_tx_hash: str | None = None
+
+
+class NeedsReviewResponse(BaseModel):
+    id: int
+    user_id: int
+    credits: Decimal
+    status: str
+    review_reason: str | None = None
+    quoted_atomic_amount: int
+    received_atomic_amount: int | None = None
+    paid_tx_hash: str | None = None
+    expires_at: datetime
+    paid_at: datetime | None = None
+    resolved_by: int | None = None
+    resolved_at: datetime | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UnmatchedDepositResponse(BaseModel):
+    id: int
+    tx_hash: str
+    lamports: int
+    raw_memo: str | None = None
+    sender: str | None = None
+    chain: Chain
+    reference_pubkey: str | None = None
+    block_time: datetime | None = None
+    status: str
+    resolved_order_id: int | None = None
+    resolved_by: int | None = None
+    resolved_at: datetime | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AdminResolveAction(str, Enum):
+    CREDIT = "credit"
+    MARK_REFUNDED = "mark_refunded"
+    
+
+class ResolveNeedsReviewRequest(BaseModel):
+    """Credit uses order.user_id + order.credits (optional credits override for underpay)."""
+
+    action: AdminResolveAction
+    credits: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
+
+
+class ResolveUnmatchedRequest(BaseModel):
+    """Credit requires user_id + credits; mark_refunded needs neither."""
+    action: AdminResolveAction
+    user_id: int
+    credits: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
+    resolved_order_id: int | None = None
+
+    @model_validator(mode="after")
+    def credit_requires__user_and_amount(self) -> "ResolveUnmatchedRequest":
+        if self.action == AdminResolveAction.CREDIT:
+            if self.user_id is None:
+                raise ValueError("user_id is required for credit action")
+            if self.credits is None:
+                raise ValueError("credits is required for credit action")
+        return self
+

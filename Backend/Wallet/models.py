@@ -93,6 +93,8 @@ class CreditOrder(Base):
     received_atomic_amount = Column(BigInteger, nullable=True)
     paid_at = Column(DateTime(timezone=True), nullable=True)
     review_reason = Column(String, nullable=True)
+    resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
     quote_id = Column(
         String(36),
         ForeignKey("payment_quotes.id"),
@@ -122,6 +124,8 @@ class UnmatchedDeposit(Base):
         nullable=False,
         default=UnmatchedDepositStatus.OPEN,
     )
+    resolved_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

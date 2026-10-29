@@ -26,6 +26,7 @@ class CreditOrderStatus(str, enum.Enum):
     PAID = "paid"
     EXPIRED = "expired"
     NEEDS_REVIEW = "needs_review"
+    REFUNDED = "refunded"
 
 
 class UnmatchedDepositStatus(str, enum.Enum):
