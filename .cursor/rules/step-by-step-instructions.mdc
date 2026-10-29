@@ -1,7 +1,8 @@
 ---
 description: >-
-  When the user asks for a plan, detailed plan, instructions, or how-to for
-  implementing something themselves, use teaching step-by-step format (not Plan Mode).
+  When the user asks in Agent chat for instructions, a walkthrough, or what to
+  put in functions so they can implement themselves, use teaching step-by-step
+  format (not Plan Mode / *.plan.md authoring).
 alwaysApply: true
 ---
 
@@ -9,47 +10,64 @@ alwaysApply: true
 
 ## When this applies
 
-Use this format when the user asks for any of:
+Use this format in **Agent chat** when the user will write the code themselves, e.g.:
 
-- a plan / detailed plan / checklist of what to do
 - instructions / how to implement X / walk me through
 - "what do I put in these functions" / "explain more in detail what needs to be done"
-- pointing at a `.plan.md` slice and asking what to do next **in chat** (still use this format — do not answer like a Plan Mode doc)
+- pointing at a `.plan.md` slice and asking what to do next **in chat**
+- a conversational "plan / checklist of what to do" when they are coding along (not authoring a plan doc)
 
 ## When this does NOT apply
 
-- **Authoring/updating** Cursor Plan Mode or `*.plan.md` files — those stay high-level: approach, architecture, todos, security notes.
+- **Plan Mode or authoring/updating `*.plan.md`** — those stay high-level: approach, architecture, todos, security notes. Trigger on the mode/artifact, not the word "plan."
 - Code review / bug findings — use the cite-code-locations rule instead.
 - Actual implementation when the user asked you to write the code — implement; don't only lecture.
+
+## Default vs practice mode
+
+**Default:** full pasteable sketches (signatures + bodies with real syntax).
+
+**Practice mode** — turn on when the user says e.g. "hints first", "let me try", or "practice mode":
+
+- Still give **Where**, **Why**, **New concept**, **Mirror**, signature, the 1–2 APIs/symbols they'll need, and a way to test.
+- Do **not** give the full function body until they say "show me" or paste their attempt.
+- Practice-mode blanks / hints are intentional; they do **not** violate the comment-only-sketch ban (that ban still applies to default mode and to any full sketch you later reveal).
 
 ## Required format (match the “right” style)
 
 Teach like a tutor for someone coding along. Structure:
 
 1. **Short opener** — what’s already done vs what they still need (one or two sentences). No long “problem essay.”
-2. **Scope** — if the ask is small (≈1–2 pieces, ≤~3 **What to write** blocks), put them in one reply. If it is larger, use **Long guides (multi-turn)** below instead of dumping every piece.
+2. **Scope** — **≤3** **What to write** blocks → one reply. **≥4** → use **Long guides (multi-turn)** below.
 3. **Per piece / step** (only for the piece(s) in *this* reply):
    - Plain-language job in one short paragraph
-   - **Where** — exact file path + class/function (or “new function under X”) + landmark (e.g. “inside `CreditOrder`, the existing `quote_id` column near `paid_tx_hash`”)
-   - **What to write** — real code the reader can type or paste (signatures, bodies, SQLAlchemy stmts). Not a full file dump unless asked — but **every** step that changes code must include a sketch with working syntax, not comments that narrate the algorithm.
-   - Compact table: Part/Job, Line/Meaning, or URL/Why
-4. Nested steps when one piece has phases (`### Step B1`, `B2`, …) — each step is something they can type next. If one function is large, **split into more steps or more turns** (helpers first, then the orchestrator), each with its own **What to write**. Do **not** collapse a large step into a numbered “flow” instead of code.
+   - **Why** — one or two lines on the design reason (e.g. “lock the row so two webhooks can’t credit twice”)
+   - **New concept** — the one idea to take away (e.g. `with_for_update()` or idempotency via a unique column)
+   - **Mirror** — existing code to copy the pattern from, with path + line range (e.g. `get_balance` in `Backend/Wallet/router.py` ~50)
+   - **Where** — exact file path + class/function (or “new function under X”) + landmark + action
+   - **What to write** — default: real code the reader can type or paste. Practice mode: signature + hints only (see above). Not a full file dump unless asked. Never replace a sketch with a numbered prose “flow.”
+   - **Line / Meaning** table — required whenever any line in the snippet is not obvious (what that line does / why it’s there). Optional Part/Job or URL/Why tables only as extras.
+4. Nested steps when one piece has phases (`### Step B1`, `B2`, …) — each step is something they can type next. If one function is large, **split into more steps or more turns** (helpers first, then the orchestrator), each with its own **What to write**.
 5. **Does / does not** table when roles are easy to mix up (e.g. which model owns which column).
 6. **Order in the file** — numbered list of where each block in *this* reply sits.
-7. **Checkpoint** — what “done” looks like for this turn, and what to ask for next (or a short smoke test if this was the last piece).
+7. **Checkpoint** — every turn must include all of:
+   - a check they can run (pytest command, HTTP call, or “imports clean”) and the expected result
+   - one short **predict** question (e.g. “what happens if the same `tx_signature` arrives twice?”) — ties to quiz-me when they want a full quiz
+   - “Paste your version and I’ll review it” (hand off to cite-code-locations on review)
+   - what to ask for next (Piece N / Step Cn), or stop if this was the last piece
 
 ## Long guides (multi-turn)
 
-When a plan slice or ask would need more than ~2–3 **What to write** blocks (e.g. Part E: schema + verify soften + deposit processor + poller + expiry + adapter), **do not** put every sketch in one reply. Combine:
+When a plan slice or ask would need **≥4** **What to write** blocks, **do not** put every sketch in one reply. Combine:
 
 1. **Menu** — short map of pieces only (title + one-line job each). No architecture essay; no sketch-free “how it works” checklist pretending to be the guide.
 2. **One piece per reply** (default), or **one nested step per reply** if that piece alone is large (e.g. C1 helpers, then C2 orchestrator).
-3. **Full tutor format for the current slice only** — Where + What to write + table. Later pieces stay names on the menu until the user asks for them.
-4. **Checkpoint** — end with: after X is in / compiles / wired, ask for Piece N (or Step Cn). Do not pre-dump N+1’s sketches “for later.”
+3. **Full tutor format for the current slice only** — Why + New concept + Mirror + Where + What to write + Line/Meaning. Later pieces stay names on the menu until the user asks for them.
+4. **Checkpoint** — as above; do not pre-dump N+1’s sketches “for later.”
 
-First reply pattern: menu + either (a) the first unfinished piece with full sketches, or (b) ask which piece they want if order is flexible.
+First reply pattern: menu + either (a) the first unfinished piece with full sketches (or practice hints), or (b) ask which piece they want if order is flexible.
 
-Follow-up replies: skip re-explaining the whole menu; one sentence of context → current piece’s Where + What to write → next checkpoint.
+Follow-up replies: skip re-explaining the whole menu; one sentence of context → current piece → next checkpoint.
 
 | Do | Do not |
 |---|---|
@@ -70,7 +88,7 @@ Every edit step MUST state all of:
 
 Never say only “change the order link” or show a snippet under the wrong class heading. If two similar names exist (`PaymentQuote` vs `CreditOrder`), say which one explicitly and use a **Does / does not** table.
 
-For **new** endpoints or helpers: say create vs edit, full route path (including router `prefix`), function name, and which existing endpoint to mirror (e.g. “same pattern as `get_balance` in `router.py`”).
+Every piece needs a **Mirror** line (existing symbol + path + approx lines). For **new** endpoints or helpers also say: create vs edit, full route path (including router `prefix`), and function name.
 
 ## One recommended approach (no hedging)
 
@@ -92,67 +110,115 @@ Do **not** assume the reader knows a prior object exists.
 Do **not** answer with:
 
 - A long **“The problem”** / architecture narrative before actionable steps
-- Ownership/rationale essays (“how this fits the interceptor”, “why the plan prefers A”) as the main body
-- High-level “conceptually (not implementing)” bullet lists with no **What to write** sketches
+- Ownership/rationale essays as the **main body** (the short **Why** / **New concept** lines above are required; essays are not)
+- High-level “conceptually (not implementing)” bullet lists with no sketches (or no practice-mode hints)
 - Plan-doc tone: summary sections, “in short” restating the whole answer, optional deep dives instead of coding steps
 - Vague checklist only (“register callback, then bootstrap, then keep getMe thin”)
 - Ambiguous target (“change X”) without file + class/symbol
 - Hedging between files/modules without a single recommendation
 - Referring to unbuilt endpoints/transactions as if they already exist
-- **“Flow to implement” / numbered prose algorithm** in place of **What to write** (e.g. “1. Fetch… 2. Match… 3. Lock…” with no pasteable function body). That is a plan-doc checklist, not a tutor step.
-- **Comment-only sketches** inside a **What to write** block (e.g. `# get_transaction(...); # find order by reference`). Narrating RPC/DB steps in comments is not code the reader can type.
-- **Skipping or thinning What to write because the function is long or “obvious.”** Length is a reason to add Step C1/C2/C3 with smaller sketches, never to replace sketches with a summary.
+- **“Flow to implement” / numbered prose algorithm** in place of **What to write**
+- **Comment-only sketches** in default mode (narrating RPC/DB steps in `# comments` is not code the reader can type)
+- **Skipping or thinning What to write because the function is long or “obvious.”** Length → Step C1/C2/C3, never a summary
 
-Brief context (a few lines + one existing-code cite) is fine **only** to set up the next step — then immediately go to Piece/Step + Where + What to write.
+Brief context (a few lines + one existing-code cite) is fine **only** to set up the next step — then immediately go to Piece/Step.
 
 ## Pre-send check (mandatory)
 
-Before sending a step-by-step answer, verify each edit step has all four: **Where** (file + target + landmark + action) and a **What to write** block that contains real syntax (defs, assigns, awaits) — not only bullets or `# comments`. If any step fails that check, rewrite that step before sending. Do not “compress for readability” by dropping sketches.
+Before sending, each edit step must have:
+
+1. **Where** with all four fields: file, target, landmark, action
+2. **Why**, **New concept**, and **Mirror**
+3. **What to write** — default: real syntax (defs, assigns, awaits), not only bullets or `# comments`; practice mode: signature + hints is enough until they ask for the body
+4. **Line / Meaning** if any line isn’t obvious
+5. **Checkpoint** with run-check + expected result, one predict question, and “paste your version”
+
+If any item fails, rewrite that step before sending. Do not “compress for readability” by dropping sketches (or practice hints).
 
 ## Mini shape (short — fits one reply)
 
 ```markdown
-You still need two pieces. CSRF is done.
+You still need two pieces. Auth middleware is done.
 
-## Piece A — …
+## Piece A — add CSRF dependency on the join route
+**Why:** browser cookies alone aren’t enough against cross-site POSTs.
+**New concept:** FastAPI dependency that reads a double-submit cookie
+**Mirror:** `get_current_user` in `Backend/Auth/deps.py` (~lines …)
+
 ### Where
-…
+- File: `Backend/Game/router.py`
+- Target: `join_game` endpoint
+- Landmark: after the existing `Depends(get_current_user)`
+- Action: add
+
 ### What to write
 (snippet)
 
+| Line | Meaning |
+|---|---|
+| … | … |
+
 ## Piece B — …
+**Why:** …
+**New concept:** …
+**Mirror:** …
 ### Where
 …
 ### What to write
 …
+| Line | Meaning |
+|---|---|
+| … | … |
+
+## Order in the file
+1. Piece A on `join_game`
+2. Piece B …
 
 ## Checkpoint
-After both are in: …
+- Run: `pytest Backend/Tests/Game/… -k csrf` → expect pass
+- Predict: what happens if the header CSRF token is missing?
+- Paste your version and I’ll review it.
+- Next: ask for Piece C when both compile.
 ```
 
 ## Mini shape (long — first turn)
 
 ```markdown
-Part E is four pieces. Schema is done.
+This slice is four pieces. Schema is done.
 
 | Piece | Job |
 |---|---|
-| C | `process_deposit_signature` + webhook |
-| D | Cold poller + cursor |
-| E | Order expiry job |
-| F | SolanaAdapter wrappers |
+| A | service method that marks an order paid |
+| B | webhook route that calls A |
+| C | background poller + cursor |
+| D | order expiry job |
 
-Starting with **Piece C** (say if you want D first).
+Starting with **Piece A** (say if you want B first).
 
-## Piece C — …
-### Step C1 — …
+## Piece A — mark order paid from a tx signature
+**Why:** one place owns “paid” so webhook and poller can’t diverge.
+**New concept:** idempotent update keyed by unique tx hash
+**Mirror:** `consume_quote` in `Backend/Wallet/services.py` (~lines …)
+
+### Step A1 — …
 ### Where
-…
+- File: …
+- Target: …
+- Landmark: …
+- Action: add
+
 ### What to write
 (snippet)
 
+| Line | Meaning |
+|---|---|
+| … | … |
+
 ## Checkpoint
-When webhook calls `process_deposit_signature` and imports clean, ask for Piece D.
+- Run: import the service module / unit test for duplicate signature → expect no double credit
+- Predict: what if the same signature arrives twice?
+- Paste your version and I’ll review it.
+- Next: ask for Piece B when A imports clean.
 ```
 
 ## Style rules
