@@ -190,7 +190,7 @@ class ResolveNeedsReviewRequest(BaseModel):
 class ResolveUnmatchedRequest(BaseModel):
     """Credit requires user_id + credits; mark_refunded needs neither."""
     action: AdminResolveAction
-    user_id: int
+    user_id: int | None = None
     credits: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
     resolved_order_id: int | None = None
 

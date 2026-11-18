@@ -3,7 +3,7 @@ from pydantic import ValidationError
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from Backend.Auth.dependencies import get_current_user
+from Backend.Auth.dependencies import get_current_admin, get_current_user
 from Backend.Auth.models import User
 from Backend.Core.core_redis import get_redis
 from Backend.db import get_session
@@ -16,9 +16,13 @@ from Backend.Wallet.schemas import (
     CreateOrderResponse,
     CreditsQuoteRequest,
     CreditsQuoteResponse,
+    NeedsReviewResponse,
     OrderStatusResponse,
+    ResolveNeedsReviewRequest,
+    ResolveUnmatchedRequest,
     SolanaWebhookPayload,
     TransactionResponse,
+    UnmatchedDepositResponse,
 )
 from Backend.Wallet.services import WalletService
 
@@ -165,4 +169,66 @@ async def get_credit_order(
         expires_at=order.expires_at,
         paid_tx_hash=order.paid_tx_hash,
     )
-                               
+
+@router.get(
+    "/admin/needs-review",
+    response_model=list[NeedsReviewResponse],
+)
+async def list_needs_review_orders(
+    current_admin: User = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    wallet_service = WalletService(session)
+    orders = await wallet_service.list_needs_review_orders()
+    return orders
+
+@router.get(
+    "/admin/unmatched-deposits",
+    response_model=list[UnmatchedDepositResponse],
+)
+async def list_unmatched_deposits(
+    current_admin: User = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    wallet_service = WalletService(session)
+    deposits = await wallet_service.list_open_unmatched_deposits()
+    return deposits
+    
+@router.post(
+    "/admin/needs-review/orders/{order_id}/resolve",
+    response_model=NeedsReviewResponse,
+)
+async def resolve_needs_review_order(
+    order_id: int,
+    body: ResolveNeedsReviewRequest,
+    current_admin: User = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    wallet_service = WalletService(session)
+    order = await wallet_service.resolve_needs_review_order(
+        order_id=order_id,
+        admin=current_admin.id,
+        action=body.action,
+        credits=body.credits)
+    return order
+
+@router.post(
+    "/admin/unmatched-deposits/{deposit_id}/resolve",
+    response_model=UnmatchedDepositResponse,
+)
+async def resolve_unmatched_deposit(
+    deposit_id: int,
+    body: ResolveUnmatchedRequest,
+    current_admin: User = Depends(get_current_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    wallet_service = WalletService(session)
+    deposit = await wallet_service.resolve_unmatched_deposit(
+        deposit_id=deposit_id,
+        admin=current_admin.id,
+        action=body.action,
+        user_id=body.user_id,
+        credits=body.credits,
+        resolved_order_id=body.resolved_order_id,
+        )
+    return deposit

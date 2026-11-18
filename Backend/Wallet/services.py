@@ -25,7 +25,13 @@ from Backend.Core.core_solana import (
     verify_fetched_solana_transaction,
 )
 from Backend.Core.exceptions import InsufficientFundsError
-from Backend.Wallet.enums import Chain, CreditOrderStatus, QuoteKind, TransactionType
+from Backend.Wallet.enums import (
+    Chain,
+    CreditOrderStatus,
+    QuoteKind,
+    TransactionType,
+    UnmatchedDepositStatus,
+)
 from Backend.Wallet.models import (
     CreditOrder,
     PaymentQuote,
@@ -34,7 +40,7 @@ from Backend.Wallet.models import (
     Wallet,
 )
 from Backend.Wallet.pricing import quote_buy_lamports
-from Backend.Wallet.schemas import MAX_PENDING_CREDIT_ORDERS
+from Backend.Wallet.schemas import MAX_PENDING_CREDIT_ORDERS, AdminResolveAction
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +287,113 @@ class WalletService:
                 detail="Credit order not found",
             )
         return order
+
+    async def resolve_needs_review_order(self, 
+                                         *,
+                                         order_id: int,
+                                         admin: int,
+                                         action: AdminResolveAction,
+                                         credits: Decimal | None = None,
+                                         ) -> CreditOrder:
+        result = await self.session.execute(
+            select(CreditOrder)
+            .where(CreditOrder.id == order_id)
+            .with_for_update()
+        )
+        order = result.scalar_one_or_none()
+        if order is None or order.status != CreditOrderStatus.NEEDS_REVIEW:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Credit order not found or not in needs_review")
+        now = datetime.now(UTC)
+
+        if action == AdminResolveAction.MARK_REFUNDED:
+            order.status = CreditOrderStatus.REFUNDED
+            order.resolved_by = admin
+            order.resolved_at = now
+            return order
+        
+        if not order.paid_tx_hash:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Credit order has no paid transaction hash")
+
+        amount = credits if credits is not None else Decimal(order.credits)
+        order.status = CreditOrderStatus.PAID
+        order.resolved_by  = admin
+        order.resolved_at = now
+
+        try:
+            await self.credit(order.user_id, amount, TransactionType.PURCHASE, tx_hash=order.paid_tx_hash)
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Transaction already applied",
+            ) from exc
+        return order
+    
+    async def resolve_unmatched_deposit(self, 
+                                        *,
+                                        deposit_id: int,
+                                        admin: int,
+                                        action: AdminResolveAction,
+                                        user_id: int | None = None,
+                                        credits: Decimal | None = None,
+                                        resolved_order_id: int | None = None,
+                                        ) -> UnmatchedDeposit:
+        result = await self.session.execute(
+            select(UnmatchedDeposit)
+            .where(UnmatchedDeposit.id == deposit_id)
+            .with_for_update()
+        )
+
+        deposit = result.scalar_one_or_none()
+        if deposit is None or deposit.status != UnmatchedDepositStatus.OPEN:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Unmatched deposit not found or not open")
+        now = datetime.now(UTC)
+
+        if action == AdminResolveAction.MARK_REFUNDED:
+            deposit.status = UnmatchedDepositStatus.REFUNDED
+            deposit.resolved_by = admin
+            deposit.resolved_at = now
+            return deposit
+
+        if user_id is None or credits is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User ID and credits are required")
+        deposit.status = UnmatchedDepositStatus.RESOLVED
+        deposit.resolved_by = admin
+        deposit.resolved_at = now
+        deposit.resolved_order_id = resolved_order_id
+        try:
+            await self.credit(user_id, credits, TransactionType.PURCHASE, tx_hash=deposit.tx_hash)
+        except IntegrityError as exc:
+            await self.session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Transaction already applied",
+            ) from exc
+        return deposit
+
+    async def list_needs_review_orders(self) -> list[CreditOrder]:
+        result = await self.session.execute(
+            select(CreditOrder)
+            .where(CreditOrder.status == CreditOrderStatus.NEEDS_REVIEW)
+            .order_by(CreditOrder.id.asc())
+        )
+        return list(result.scalars().all() )
+
+    async def list_open_unmatched_deposits(self) -> list[UnmatchedDeposit]:
+        result = await self.session.execute(
+            select(UnmatchedDeposit)
+            .where(UnmatchedDeposit.status == UnmatchedDepositStatus.OPEN)
+            .order_by(UnmatchedDeposit.id.asc())
+        )
+        return list(result.scalars().all() )
 
     async def process_deposit_signature(self, tx_signature: str) -> None:
         tx = await self._fetch_finalized_tx(tx_signature)
