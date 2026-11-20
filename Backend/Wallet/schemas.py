@@ -113,10 +113,31 @@ class WithdrawQuoteRequest(BaseModel):
 
 
 class WithdrawRequest(BaseModel):
-    """Withdraw accepts quote_id + idempotency_key only — never client amounts."""
-
+    """Withdraw accepts quote_id + idempotency_key + password — never client amounts."""
     quote_id: UUID
     idempotency_key: str = Field(min_length=16, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class WithdrawQuoteResponse(BaseModel):
+    quote_id: str
+    expires_at: datetime
+    asset: str
+    destination: str
+    credits: str
+    fee_credits: str
+    net_credits: str
+    net_atomic: int
+    ata_rent_lamports: int = 0
+
+
+class WithdrawResponse(BaseModel):
+    withdrawal_id: int
+    status: str
+    credits_debited: Decimal
+    net_atomic: int
+    asset: str
+    destination: str
 
 
 class CreateOrderResponse(BaseModel):

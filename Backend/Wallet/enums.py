@@ -29,6 +29,15 @@ class CreditOrderStatus(str, enum.Enum):
     REFUNDED = "refunded"
 
 
+class WithdrawalStatus(str, enum.Enum):
+    QUEUED = "queued"
+    SIGNED = "signed"
+    BROADCAST = "broadcast"
+    CONFIRMED = "confirmed"
+    FAILED_REFUNDED = "failed_refunded"
+    NEEDS_REVIEW = "needs_review"
+
+
 class UnmatchedDepositStatus(str, enum.Enum):
     OPEN = "open"
     RESOLVED = "resolved"

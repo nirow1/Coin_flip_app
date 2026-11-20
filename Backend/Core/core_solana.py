@@ -11,10 +11,12 @@ from solana.rpc.models import TxOpts
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from solders.signature import Signature
+from solders.solders import SYSTEM_PROGRAM_ID, get_associated_token_address
 from solders.system_program import TransferParams, transfer
 from solders.transaction import Transaction
 from spl.memo.constants import MEMO_PROGRAM_ID
 
+from Backend.Wallet.enums import WithdrawAsset
 from Backend.config import SolanaCluster, settings
 
 logger = logging.getLogger(__name__)
@@ -542,6 +544,49 @@ async def build_signed_sol_transfer(
     signature = str(tx.signatures[0])
     return bytes(tx), signature, last_valid_block_height
 
+
+async def assert_solana_withdraw_destination(
+    *,
+    destination: str,
+    asset: WithdrawAsset,
+    rpc_url: str | None = None,
+) -> dict[str, str]:
+    """RPC + curve checks for withdraw quotes. Returns normalized dest (+ ATA for USDC)."""
+    try:
+        dest_pubkey = Pubkey.from_string(destination)
+    except Exception as exc:
+        raise ValueError("destination must be a valid Solana public key") from exc
+
+    dest = str(dest_pubkey)
+    house = {
+        settings.SOLANA_HOT_WALLET_ADDRESS,
+        settings.SOLANA_COLD_RECEIVE_ADDRESS,
+    }
+    if dest in house:
+        raise ValueError("destination must not be a house address")
+
+    url = rpc_url or settings.SOLANA_RPC_URL
+    async with AsyncClient(url, timeout=_RPC_TIMEOUT_SEC) as client:
+        info = await client.get_account_info(dest_pubkey)
+        account = info.value
+
+    if account is not None:
+        owner = str(account.owner)
+        if owner != str(SYSTEM_PROGRAM_ID) or account.executable:
+            raise ValueError(
+                "destination must be a system account or an unused address"
+            )
+
+    result: dict[str, str] = {"destination": dest}
+
+    if asset == WithdrawAsset.USDC:
+        if not dest_pubkey.is_on_curve():
+            raise ValueError("USDC destination owner must be an on-curve wallet")
+        mint = Pubkey.from_string(settings.SOLANA_USDC_MINT)
+        ata = get_associated_token_address(dest_pubkey, mint)
+        result["ata"] = str(ata)
+
+    return result
 
 async def broadcast_and_confirm(
     raw_bytes: bytes,

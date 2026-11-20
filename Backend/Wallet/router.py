@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from Backend.Auth.dependencies import get_current_admin, get_current_user
 from Backend.Auth.models import User
+from Backend.config import settings
 from Backend.Core.core_redis import get_redis
 from Backend.db import get_session
 from Backend.Wallet.enums import Chain
@@ -23,6 +24,10 @@ from Backend.Wallet.schemas import (
     SolanaWebhookPayload,
     TransactionResponse,
     UnmatchedDepositResponse,
+    WithdrawQuoteRequest,
+    WithdrawQuoteResponse,
+    WithdrawRequest,
+    WithdrawResponse,
 )
 from Backend.Wallet.services import WalletService
 
@@ -35,6 +40,15 @@ async def require_solana_payments(request: Request) -> None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Solana payments temporarily unavailable",
+        )
+
+
+async def require_withdrawals_enabled() -> None:
+    """503 while WITHDRAWALS_ENABLED is False (built but dark)."""
+    if not settings.WITHDRAWALS_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Withdrawals temporarily unavailable",
         )
 
 
@@ -169,6 +183,66 @@ async def get_credit_order(
         expires_at=order.expires_at,
         paid_tx_hash=order.paid_tx_hash,
     )
+
+
+@router.post("/credits/withdraw/quote", response_model=WithdrawQuoteResponse)
+async def create_withdraw_quote(
+    body: WithdrawQuoteRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
+    _: None = Depends(require_solana_payments),
+    __: None = Depends(require_withdrawals_enabled),
+):
+    await _enforce_quote_rate_limit(redis, current_user.id)
+    wallet_service = WalletService(session)
+    quote = await wallet_service.create_withdraw_quote(
+        user_id=current_user.id,
+        credits=body.credits,
+        asset=body.asset,
+        destination=body.destination,
+        chain=body.chain,
+        redis=redis,
+    )
+    p = quote.payload
+    return WithdrawQuoteResponse(
+        quote_id=quote.id,
+        expires_at=quote.expires_at,
+        asset=p["asset"],
+        destination=p["destination"],
+        credits=p["credits"],
+        fee_credits=p["fee_credits"],
+        net_credits=p["net_credits"],
+        net_atomic=int(p["net_atomic"]),
+        ata_rent_lamports=int(p.get("ata_rent_lamports") or 0),
+    )
+
+
+@router.post("/credits/withdraw", response_model=WithdrawResponse)
+async def create_withdrawal(
+    body: WithdrawRequest,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(require_solana_payments),
+    __: None = Depends(require_withdrawals_enabled),
+):
+    wallet_service = WalletService(session)
+    withdrawal = await wallet_service.create_withdrawal(
+        user_id=current_user.id,
+        quote_id=str(body.quote_id),
+        idempotency_key=body.idempotency_key,
+        password=body.password,
+        password_hash=current_user.password_hash,
+    )
+    return WithdrawResponse(
+        withdrawal_id=withdrawal.id,
+        status=withdrawal.status.value,
+        credits_debited=withdrawal.credits_debited,
+        net_atomic=withdrawal.net_atomic_amount,
+        asset=withdrawal.asset.value,
+        destination=withdrawal.destination,
+    )
+
 
 @router.get(
     "/admin/needs-review",

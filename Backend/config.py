@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
@@ -29,6 +30,12 @@ class Settings(BaseSettings):
     # Keypair JSON — required for payout/reconciler workers only; optional for API web.
     SOLANA_HOT_WALLET_SECRET: SecretStr | None = None
     SOLANA_USDC_MINT: str
+    # Withdrawals — keep False until email verification + void-clawback land
+    WITHDRAWALS_ENABLED: bool = False
+    # Credits (two-decimal wallet units). Tune before flipping the flag on.
+    WITHDRAW_DAILY_USER_CAP_CREDITS: Decimal = Decimal("500.00")
+    WITHDRAW_DAILY_GLOBAL_CAP_CREDITS: Decimal = Decimal("5000.00")
+    WITHDRAW_FEE_CREDITS: Decimal = Decimal("0.50")
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod

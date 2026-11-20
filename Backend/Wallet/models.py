@@ -9,8 +9,10 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -22,6 +24,8 @@ from Backend.Wallet.enums import (
     QuoteKind,
     TransactionType,
     UnmatchedDepositStatus,
+    WithdrawalStatus,
+    WithdrawAsset,
 )
 
 
@@ -128,6 +132,51 @@ class UnmatchedDeposit(Base):
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
+class Withdrawal(Base):
+    __tablename__ = "withdrawals"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "idempotency_key",
+            name="uq_withdrawals_user_idempotency",
+        ),
+        Index("ix_withdrawals_status_created_at", "status", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    chain = Column(Enum(Chain), nullable=False)
+    asset = Column(Enum(WithdrawAsset), nullable=False)
+    credits_debited = Column(Numeric(12, 2), nullable=False)
+    net_atomic_amount = Column(BigInteger, nullable=False)
+    destination = Column(String, nullable=False)
+    quote_id = Column(
+        String(36),
+        ForeignKey("payment_quotes.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    idempotency_key = Column(String(64), nullable=False)
+    status = Column(
+        Enum(WithdrawalStatus),
+        nullable=False,
+        default=WithdrawalStatus.QUEUED,
+    )
+    # Polygon reuse; unused on Solana
+    nonce = Column(Integer, nullable=True)
+    signature = Column(String, nullable=True, unique=True)
+    attempt_hashes = Column(JSON, nullable=True)
+    raw_tx = Column(LargeBinary, nullable=True)
+    last_valid_block_height = Column(BigInteger, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    confirmed_at = Column(DateTime(timezone=True), nullable=True)
 
 class ChainCursor(Base):
     __tablename__ = "chain_cursors"

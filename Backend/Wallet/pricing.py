@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import time
-from decimal import ROUND_CEILING, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import TypedDict
 
 import httpx
 from fastapi import HTTPException, status
 from redis.asyncio import Redis
+
+from Backend.Core.core_solana import SYSTEM_ACCOUNT_RENT_EXEMPT_LAMPORTS
+from Backend.config import settings
+from Backend.Wallet.enums import WithdrawAsset
 
 # pyth SOL/USD
 PYTH_HERMES_URL = "https://hermes.pyth.network/v2/updates/price/latest"
@@ -25,9 +29,13 @@ SPREAD = Decimal("0.01")        # 1%
 SWAP_BUFFER = Decimal("0.005")  # 0.5%
 PRICE_SOURCE = "pyth:SOL/USD"
 
+USDC_DECIMALS = 6
+LAMPORTS_PER_SOL_INT = 1_000_000_000
+
 class SolUsdPrice(TypedDict):
     price: Decimal
     published_time: int
+
 
 async def quote_buy_lamports(credits: int, redis: Redis) -> dict:
     sol = await get_sol_usd_price(redis)
@@ -45,6 +53,57 @@ async def quote_buy_lamports(credits: int, redis: Redis) -> dict:
         "fee": str(fee),
         "price_source": PRICE_SOURCE,
     }
+
+
+async def quote_withdraw_atomic(
+    *,
+    credits: Decimal,
+    asset: WithdrawAsset,
+    redis: Redis,
+) -> dict:
+    fee = settings.WITHDRAW_FEE_CREDITS
+    if credits <= fee:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="credits must exceed withdraw fee",
+        )
+    net_credits = credits - fee
+    if asset == WithdrawAsset.SOL:
+        sol = await get_sol_usd_price(redis)
+        price = sol["price"]
+        # Floor: never send more SOL than credits warrant
+        lamports = (
+            net_credits / price * Decimal(LAMPORTS_PER_SOL_INT)
+        ).to_integral_value(rounding=ROUND_FLOOR)
+        if int(lamports) < SYSTEM_ACCOUNT_RENT_EXEMPT_LAMPORTS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="net SOL below rent-exempt minimum",
+            )
+        return {
+            "net_atomic": int(lamports),
+            "fee_credits": str(fee),
+            "net_credits": str(net_credits),
+            "price": str(price),
+            "price_source": PRICE_SOURCE,
+        }
+     # USDC: 1 credit = $1 = 1 USDC (6 decimals)
+    units = (net_credits * Decimal(10**USDC_DECIMALS)).to_integral_value(
+        rounding=ROUND_FLOOR
+    )
+    if int(units) <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="net USDC amount is zero",
+        )
+    return {
+        "net_atomic": int(units),
+        "fee_credits": str(fee),
+        "net_credits": str(net_credits),
+        "price": "1",
+        "price_source": "peg:USDC",
+    }
+
 
 async def get_sol_usd_price(redis: Redis) -> SolUsdPrice:
     cached = await redis.get(CACHE_KEY)
@@ -74,6 +133,7 @@ async def get_sol_usd_price(redis: Redis) -> SolUsdPrice:
     )
     return sol_usd
 
+
 async def _fetch_sol_usd_from_pyth() -> SolUsdPrice:
     params = [("ids[]", SOL_USD_FEED_ID)]
     async with httpx.AsyncClient(timeout=5.0) as client:
@@ -85,6 +145,7 @@ async def _fetch_sol_usd_from_pyth() -> SolUsdPrice:
     if not parsed:
         raise ValueError("empty parsed price feeds")
     return _parse_sol_usd(parsed[0])
+
 
 def _parse_sol_usd(entry: dict) -> SolUsdPrice:
     p = entry["price"]

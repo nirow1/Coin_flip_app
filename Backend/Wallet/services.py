@@ -9,17 +9,21 @@ from urllib.parse import urlencode
 
 from fastapi import HTTPException, status
 from redis.asyncio import Redis
+from solana.exceptions import SolanaRpcException
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Finalized
+from solana.rpc.core import RPCException
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from solders.signature import Signature
+from solders.solders import get_associated_token_address
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from Backend.config import settings
 from Backend.Core.core_solana import (
+    assert_solana_withdraw_destination,
     full_account_keys,
     iter_memos,
     verify_fetched_solana_transaction,
@@ -31,6 +35,8 @@ from Backend.Wallet.enums import (
     QuoteKind,
     TransactionType,
     UnmatchedDepositStatus,
+    WithdrawalStatus,
+    WithdrawAsset,
 )
 from Backend.Wallet.models import (
     CreditOrder,
@@ -38,8 +44,9 @@ from Backend.Wallet.models import (
     Transaction,
     UnmatchedDeposit,
     Wallet,
+    Withdrawal,
 )
-from Backend.Wallet.pricing import quote_buy_lamports
+from Backend.Wallet.pricing import quote_buy_lamports, quote_withdraw_atomic
 from Backend.Wallet.schemas import MAX_PENDING_CREDIT_ORDERS, AdminResolveAction
 
 logger = logging.getLogger(__name__)
@@ -186,6 +193,126 @@ class WalletService:
         self.session.add(quote)
         await self.session.flush()
         return quote
+
+    async def create_withdraw_quote(
+        self,
+        *,
+        user_id: int,
+        credits: Decimal,
+        asset: WithdrawAsset,
+        destination: str,
+        chain: Chain,
+        redis: Redis,
+    ) -> PaymentQuote:
+        if chain != Chain.SOLANA:
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="Only Solana withdrawals are implemented",
+            )
+        try:
+            dest_info = await assert_solana_withdraw_destination(
+            destination=destination,
+            asset=asset,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+            ) from exc
+        
+        priced = await quote_withdraw_atomic(
+            credits=credits, asset=asset, redis=redis
+        )
+
+        net_atomic = int(priced["net_atomic"])
+        ata = dest_info.get("ata")
+        ata_rent_lamports = 0
+        async with AsyncClient(
+            settings.SOLANA_RPC_URL, timeout=_RPC_TIMEOUT_SEC
+        ) as client:
+            if asset == WithdrawAsset.USDC and ata:
+                ata_info = await client.get_account_info(Pubkey.from_string(ata))
+                if ata_info.value is None:
+                    rent_resp = await client.get_minimum_balance_for_rent_exemption(165)
+                    ata_rent_lamports = int(rent_resp.value)
+
+            hot = Pubkey.from_string(settings.SOLANA_HOT_WALLET_ADDRESS)
+            if asset == WithdrawAsset.SOL:
+                bal = await client.get_balance(hot)
+                available = int(bal.value)
+            else:
+                mint = Pubkey.from_string(settings.SOLANA_USDC_MINT)
+                hot_ata = get_associated_token_address(hot, mint)
+                # Missing hot ATA → RPC errors; treat as zero inventory (same as sketch).
+                try:
+                    tok = await client.get_token_account_balance(hot_ata)
+                    available = (
+                        int(tok.value.amount) if tok.value is not None else 0
+                    )
+                except (RPCException, SolanaRpcException):
+                    available = 0
+        
+        reserved = await self.session.scalar(
+            select(func.coalesce(func.sum(Withdrawal.net_atomic_amount), 0)).where(
+                Withdrawal.chain == Chain.SOLANA,
+                Withdrawal.asset == asset,
+                Withdrawal.status.in_(
+                    [
+                        WithdrawalStatus.QUEUED,
+                        WithdrawalStatus.SIGNED,
+                        WithdrawalStatus.BROADCAST,
+                    ]
+                ),
+            )
+        )
+        free = available - int(reserved or 0)
+        if free < net_atomic:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Insufficient hot wallet inventory",
+            )
+        
+        if asset == WithdrawAsset.USDC and ata_rent_lamports:
+            sol_bal = await self._hot_sol_lamports_for_rent()
+            if sol_bal < ata_rent_lamports:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Hot wallet SOL too low to create destination ATA",
+                )
+        
+        now = datetime.now(UTC)
+        payload = {
+            "credits": str(credits),
+            "chain": chain.value,
+            "asset": asset.value,
+            "destination": dest_info["destination"],
+            "net_atomic": net_atomic,
+            "fee_credits": priced["fee_credits"],
+            "net_credits": priced["net_credits"],
+            "price": priced["price"],
+            "price_source": priced["price_source"],
+            "ata": ata,
+            "ata_rent_lamports": ata_rent_lamports,
+        }
+        quote = PaymentQuote(
+            user_id=user_id,
+            kind=QuoteKind.WITHDRAW,
+            chain=chain,
+            payload=payload,
+            expires_at=now + timedelta(minutes=5),
+        )
+        self.session.add(quote)
+        await self.session.flush()
+        return quote
+    
+    async def _hot_sol_lamports_for_rent(self) -> int:
+        async with AsyncClient(
+            settings.SOLANA_RPC_URL, timeout=_RPC_TIMEOUT_SEC
+        ) as client:
+            bal = await client.get_balance(
+                Pubkey.from_string(settings.SOLANA_HOT_WALLET_ADDRESS)
+            )
+            return int(bal.value)
 
     async def consume_quote(
         self,
