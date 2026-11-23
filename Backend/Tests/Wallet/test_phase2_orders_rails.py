@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from solders.keypair import Keypair
 
 from Backend.Wallet.enums import Chain, WithdrawAsset
 from Backend.Wallet.rails import get_adapter
@@ -15,8 +16,9 @@ from Backend.Wallet.schemas import (
     WithdrawRequest,
 )
 
-# Valid base58 pubkey that is not the wrapped-SOL mint alone (still a real Pubkey).
-VALID_DEST = "So11111111111111111111111111111111111111112"
+# On-curve system wallet pubkey — NOT the wSOL mint (finding 5 / Piece C).
+VALID_DEST = str(Keypair().pubkey())
+WSOL_MINT = "So11111111111111111111111111111111111111112"
 HOUSE_HOT = "HotHouse1111111111111111111111111111111111"
 HOUSE_COLD = "ColdHouse111111111111111111111111111111111"
 
@@ -124,14 +126,26 @@ def test_withdraw_quote_accepts_two_decimals():
 
 def test_withdraw_request_has_no_amount_fields():
     qid = uuid4()
-    req = WithdrawRequest(quote_id=qid, idempotency_key="idem-key-16chars")
-    assert set(WithdrawRequest.model_fields.keys()) == {"quote_id", "idempotency_key"}
+    req = WithdrawRequest(
+        quote_id=qid,
+        idempotency_key="idem-key-16chars",
+        password="Secret123!",
+    )
+    assert set(WithdrawRequest.model_fields.keys()) == {
+        "quote_id",
+        "idempotency_key",
+        "password",
+    }
     assert req.quote_id == qid
 
 
 def test_withdraw_request_rejects_short_idempotency_key():
     with pytest.raises(ValidationError):
-        WithdrawRequest(quote_id=uuid4(), idempotency_key="short")
+        WithdrawRequest(
+            quote_id=uuid4(),
+            idempotency_key="short",
+            password="Secret123!",
+        )
 
 
 @pytest.mark.asyncio
@@ -185,9 +199,56 @@ async def test_solana_adapter_verify_deposit_delegates_to_wallet_service():
 
 
 @pytest.mark.asyncio
-async def test_solana_adapter_send_still_not_implemented():
+async def test_solana_adapter_send_delegates_to_builders():
     adapter = get_adapter(Chain.SOLANA)
-    with pytest.raises(NotImplementedError, match="send_native"):
-        await adapter.send_native()
-    with pytest.raises(NotImplementedError, match="send_usdc"):
-        await adapter.send_usdc()
+    signed = (b"raw", "sig", 100)
+    with patch(
+        "Backend.Wallet.rails.solana.build_signed_sol_transfer",
+        new_callable=AsyncMock,
+        return_value=signed,
+    ) as sol:
+        assert await adapter.send_native(destination=VALID_DEST, lamports=1_000_000) == signed
+    sol.assert_awaited_once()
+
+    with patch(
+        "Backend.Wallet.rails.solana.build_signed_usdc_transfer",
+        new_callable=AsyncMock,
+        return_value=signed,
+    ) as usdc:
+        assert (
+            await adapter.send_usdc(destination=VALID_DEST, amount_units=1_000_000)
+            == signed
+        )
+    usdc.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_assert_withdraw_destination_rejects_wsol_mint():
+    """wSOL mint is a valid pubkey but not a system wallet — finding 5."""
+    from Backend.Core.core_solana import assert_solana_withdraw_destination
+
+    account = MagicMock()
+    # Token program owns the mint account (not System Program)
+    account.owner = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+    account.executable = False
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.get_account_info.return_value.value = account
+
+    with (
+        patch("Backend.Core.core_solana.AsyncClient", return_value=mock_client),
+        patch(
+            "Backend.Core.core_solana.settings",
+            SOLANA_HOT_WALLET_ADDRESS=HOUSE_HOT,
+            SOLANA_COLD_RECEIVE_ADDRESS=HOUSE_COLD,
+            SOLANA_RPC_URL="http://localhost",
+            SOLANA_USDC_MINT="4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+        ),
+    ):
+        with pytest.raises(ValueError, match="system account"):
+            await assert_solana_withdraw_destination(
+                destination=WSOL_MINT,
+                asset=WithdrawAsset.SOL,
+            )

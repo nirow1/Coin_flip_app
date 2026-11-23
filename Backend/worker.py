@@ -9,7 +9,12 @@ from Backend.Core.core_solana import (
 from Backend.Core.leader_lock import LeaderLock, run_if_leader
 from Backend.Core.redis_config import create_redis_client
 from Backend.db import SessionLocal, init_db
-from Backend.Wallet.jobs import run_cold_deposit_poller, run_order_expiry_job
+from Backend.Wallet.jobs import (
+    run_cold_deposit_poller,
+    run_order_expiry_job,
+    run_withdraw_reconciler,
+    run_withdraw_sender,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +32,8 @@ async def main() -> None:
     factories = [
         lambda: run_cold_deposit_poller(SessionLocal),
         lambda: run_order_expiry_job(SessionLocal),
+        lambda: run_withdraw_sender(SessionLocal),
+        lambda: run_withdraw_reconciler(SessionLocal),
     ]
 
     leader_task = asyncio.create_task(run_if_leader(lock, factories))

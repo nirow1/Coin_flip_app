@@ -21,6 +21,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from Backend.Core.security import verify_password
 from Backend.config import settings
 from Backend.Core.core_solana import (
     assert_solana_withdraw_destination,
@@ -193,6 +194,117 @@ class WalletService:
         self.session.add(quote)
         await self.session.flush()
         return quote
+
+    async def create_withdrawal(
+        self,
+        *,
+        user_id: int,
+        quote_id: str,
+        idempotency_key: str,
+        password: str,
+        password_hash: str,
+    ) -> Withdrawal:
+        if not verify_password(password, password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid password",
+            )
+
+        existing = await self.session.scalar(
+            select(Withdrawal).where(
+                Withdrawal.user_id == user_id,
+                Withdrawal.idempotency_key == idempotency_key,
+            )
+        )
+        if existing is not None:
+            return existing
+
+        consumed = await self.consume_quote(
+            quote_id=quote_id,
+            user_id=user_id,
+            kind=QuoteKind.WITHDRAW,
+        )
+        payload = consumed["payload"]
+        credits = Decimal(str(payload["credits"]))
+        net_atomic = int(payload["net_atomic"])
+        asset = WithdrawAsset(payload["asset"])
+        chain = Chain(payload["chain"])
+        destination = str(payload["destination"])
+
+        since = datetime.now(UTC) - timedelta(hours=24)
+        user_total = await self._withdrawn_credits_since(since=since, user_id=user_id)
+        if user_total + credits > settings.WITHDRAW_DAILY_USER_CAP_CREDITS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Daily withdraw cap exceeded",
+            )
+
+        global_total = await self._withdrawn_credits_since(since=since)
+        if global_total + credits > settings.WITHDRAW_DAILY_GLOBAL_CAP_CREDITS:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Global withdraw cap exceeded",
+            )
+        
+        try:
+            await self.debit(
+                user_id,
+                credits,
+                transaction_type=TransactionType.WITHDRAWAL,
+            )
+        except InsufficientFundsError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=exc.message,
+            ) from exc
+
+        withdrawal = Withdrawal(
+            user_id=user_id,
+            chain=chain,
+            asset=asset,
+            credits_debited=credits,
+            net_atomic_amount=net_atomic,
+            destination=destination,
+            quote_id=quote_id,
+            idempotency_key=idempotency_key,
+            status=WithdrawalStatus.QUEUED,
+        )
+        self.session.add(withdrawal)
+        try:
+            await self.session.flush()
+        except IntegrityError:
+            await self.session.rollback()
+            raced = await self.session.scalar(
+                select(Withdrawal).where(
+                    Withdrawal.user_id == user_id,
+                    Withdrawal.idempotency_key == idempotency_key,
+                )
+            )
+            if raced is not None:
+                return raced
+            raise
+        
+        await self.session.refresh(withdrawal)
+        return withdrawal
+
+    async def _withdrawn_credits_since(
+        self,
+        *,
+        since: datetime,
+        user_id: int | None = None,
+    ) -> Decimal:
+        """Sum credits_debited for withdrawals still holding funds (not failed_refunded)."""
+        stmt = select(
+            func.coalesce(func.sum(Withdrawal.credits_debited), 0)
+        ).where(
+            Withdrawal.created_at >= since,
+            Withdrawal.status != WithdrawalStatus.FAILED_REFUNDED,
+        )
+        if user_id is not None:
+            stmt = stmt.where(Withdrawal.user_id == user_id)
+        total = await self.session.scalar(stmt)
+        return Decimal(str(total or 0))
+
 
     async def create_withdraw_quote(
         self,

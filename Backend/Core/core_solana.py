@@ -15,9 +15,15 @@ from solders.solders import SYSTEM_PROGRAM_ID, get_associated_token_address
 from solders.system_program import TransferParams, transfer
 from solders.transaction import Transaction
 from spl.memo.constants import MEMO_PROGRAM_ID
+from spl.token.constants import TOKEN_PROGRAM_ID
+from spl.token.instructions import (
+    create_idempotent_associated_token_account,
+    transfer_checked,
+)
+from spl.token.models import TransferCheckedParams
 
-from Backend.Wallet.enums import WithdrawAsset
 from Backend.config import SolanaCluster, settings
+from Backend.Wallet.enums import WithdrawAsset
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +59,7 @@ MEMO_PROGRAM_IDS: frozenset[str] = frozenset(
 
 # Rent-exempt minimum for a basic system account (SOL transfers that may fund new wallets).
 SYSTEM_ACCOUNT_RENT_EXEMPT_LAMPORTS = 890_880
+USDC_DECIMALS = 6
 
 
 @dataclass(frozen=True)
@@ -530,7 +537,7 @@ async def build_signed_sol_transfer(
         )
     )
 
-    async with AsyncClient(rpc_url) as client:
+    async with AsyncClient(rpc_url, timeout=_RPC_TIMEOUT_SEC) as client:
         blockhash_resp = await client.get_latest_blockhash(commitment=Confirmed)
         blockhash = blockhash_resp.value.blockhash
         last_valid_block_height = int(blockhash_resp.value.last_valid_block_height)
@@ -544,6 +551,71 @@ async def build_signed_sol_transfer(
     signature = str(tx.signatures[0])
     return bytes(tx), signature, last_valid_block_height
 
+
+async def build_signed_usdc_transfer(
+    destination_owner: str,
+    amount_units: int,
+    rpc_url: str,
+) -> tuple[bytes, str, int]:
+    """
+    Build and sign a USDC (SPL) transfer without broadcasting.
+    Includes idempotent create-ATA for the destination.
+    Returns (raw_tx_bytes, signature_base58, last_valid_block_height).
+    """
+    if amount_units <= 0:
+            raise ValueError("amount_units must be positive")
+    try:
+        dest_owner = Pubkey.from_string(destination_owner)
+    except Exception as exc:
+        raise ValueError("destination must be a valid Solana public key") from exc
+
+    dest = str(dest_owner)
+    house = {
+        settings.SOLANA_HOT_WALLET_ADDRESS,
+        settings.SOLANA_COLD_RECEIVE_ADDRESS,
+    }
+    if dest in house:
+        raise ValueError("destination must not be a house address")
+    if not dest_owner.is_on_curve():
+        raise ValueError("USDC destination owner must be an on-curve wallet")
+    
+    mint = Pubkey.from_string(settings.SOLANA_USDC_MINT)
+    sender_keypair = load_hot_keypair()
+    payer = sender_keypair.pubkey()
+
+    source_ata = get_associated_token_address(payer, mint)
+    dest_ata = get_associated_token_address(dest_owner, mint)
+
+    create_ata_ix = create_idempotent_associated_token_account(
+        payer=payer,
+        owner=dest_owner,
+        mint=mint,
+    )
+    transfer_ix = transfer_checked(
+        TransferCheckedParams(
+            program_id=TOKEN_PROGRAM_ID,
+            source=source_ata,
+            mint=mint,
+            dest=dest_ata,
+            owner=payer,
+            amount=amount_units,
+            decimals=USDC_DECIMALS,
+        )
+    )
+
+    async with AsyncClient(rpc_url, timeout=_RPC_TIMEOUT_SEC) as client:
+        blockhash_resp = await client.get_latest_blockhash(commitment=Confirmed)
+        blockhash = blockhash_resp.value.blockhash
+        last_valid_block_height = int(blockhash_resp.value.last_valid_block_height)
+
+    tx = Transaction.new_signed_with_payer(
+        instructions=[create_ata_ix, transfer_ix],
+        payer=payer,
+        signing_keypairs=[sender_keypair],
+        recent_blockhash=blockhash,
+    )
+    signature = str(tx.signatures[0])
+    return bytes(tx), signature, last_valid_block_height
 
 async def assert_solana_withdraw_destination(
     *,
@@ -601,7 +673,7 @@ async def broadcast_and_confirm(
     """
     sig = Signature.from_string(signature)
 
-    async with AsyncClient(rpc_url) as client:
+    async with AsyncClient(rpc_url, timeout=_RPC_TIMEOUT_SEC) as client:
         try:
             send_resp = await client.send_raw_transaction(
                 raw_bytes,
