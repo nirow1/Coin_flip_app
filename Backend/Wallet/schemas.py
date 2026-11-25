@@ -73,6 +73,13 @@ class CreditsQuoteRequest(BaseModel):
 class CreditsQuoteResponse(BaseModel):
     quote_id: str
     expires_at: datetime
+    credits: int
+    amount_sol: str
+    lamports: int
+    fee: str
+    price: str
+    price_source: str
+    cluster: str
 
 
 class CreateOrderRequest(BaseModel):

@@ -1,9 +1,128 @@
-import { useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
+import {
+  createQuote,
+  createOrder,
+  getOrder,
+  type CreditsQuoteResponse,
+  type CreateOrderResponse,
+} from '../../Api/wallet';
+import { GameContext } from '../../Context/GameContext';
+
+type Step = 'credits' | 'quote' | 'pay' | 'paid';
+
+function secondsUntil(iso: string): number {
+  return Math.max(0, Math.floor((new Date(iso).getTime() - Date.now()) / 1000));
+}
+
+function formatCountdown(totalSec: number): string {
+  const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
+  const s = String(totalSec % 60).padStart(2, '0');
+  return `${m}:${s}`;
+}
+
+function errorMessage(err: unknown): string {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+  if (typeof detail === 'string') return detail;
+  return 'Something went wrong. Try again.';
+}
 
 export default function DepositPage() {
-  const [method, setMethod] = useState<'card' | 'solana'>('card');
-  const [amount, setAmount] = useState('');
-  const solanaAddress = 'DailyFlip7xK3mN9pQrZ2wVbLcUoYsAeGhJfTiXvBnRd';
+  const { refreshBalance } = useContext(GameContext);
+
+  const [step, setStep] = useState<Step>('credits');
+  const [creditsInput, setCreditsInput] = useState('');
+  const [quote, setQuote] = useState<CreditsQuoteResponse | null>(null);
+  const [order, setOrder] = useState<CreateOrderResponse | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [rail, setRail] = useState<'solana' | 'polygon'>('solana');
+
+  const expiryIso =
+    step === 'quote' ? quote?.expires_at : step === 'pay' ? order?.expires_at : undefined;
+
+  useEffect(() => {
+    if (!expiryIso) {
+      setSecondsLeft(0);
+      return;
+    }
+    const tick = () => setSecondsLeft(secondsUntil(expiryIso));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [expiryIso]);
+
+  useEffect(() => {
+    if (step !== 'pay' || !order) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await getOrder(order.order_id);
+        if (cancelled) return;
+        setStatus(res.data.status);
+        if (res.data.status === 'paid') {
+          await refreshBalance();
+          setStep('paid');
+        }
+      } catch (err) {
+        if (!cancelled) setError(errorMessage(err));
+      }
+    };
+    void poll();
+    const id = setInterval(() => void poll(), 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [step, order, refreshBalance]);
+
+  const onGetQuote = async () => {
+    const credits = Number(creditsInput);
+    if (!Number.isInteger(credits) || credits < 1) {
+      setError('Enter a whole number of credits (at least 1).');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await createQuote(credits);
+      setQuote(res.data);
+      setOrder(null);
+      setStatus(null);
+      setStep('quote');
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onCreateOrder = async () => {
+    if (!quote) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await createOrder(quote.quote_id);
+      setOrder(res.data);
+      setStatus('pending');
+      setStep('pay');
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onStartOver = () => {
+    setStep('credits');
+    setCreditsInput('');
+    setQuote(null);
+    setOrder(null);
+    setStatus(null);
+    setError(null);
+  };
 
   return (
     <div className="p-6 max-w-7xl text-gray-900">
@@ -13,9 +132,9 @@ export default function DepositPage() {
         {/* Left: method selector */}
         <div className="flex flex-col gap-3">
           <button
-            onClick={() => setMethod('card')}
+            onClick={() => setRail('polygon')}
             className={`w-full flex items-center gap-4 p-5 rounded-2xl border-2 transition-all text-left ${
-              method === 'card'
+              rail === 'polygon'
                 ? 'border-[#efbf04] bg-[#fffdf0] shadow-sm'
                 : 'border-gray-100 bg-white hover:border-[#efbf04]/40'
             }`}
@@ -26,16 +145,16 @@ export default function DepositPage() {
               </svg>
             </div>
             <div>
-              <p className="font-bold font-[Alexandria]">Card Deposit</p>
-              <p className="text-xs text-gray-400 font-[Alexandria] mt-0.5">Visa, Mastercard, AMEX</p>
+              <p className="font-bold font-[Alexandria]">Polygon Deposit</p>
+              <p className="text-xs text-gray-400 font-[Alexandria] mt-0.5">USDC · coming soon</p>
             </div>
-            {method === 'card' && <div className="ml-auto w-2.5 h-2.5 rounded-full bg-[#efbf04]" />}
+            {rail === 'polygon' && <div className="ml-auto w-2.5 h-2.5 rounded-full bg-[#efbf04]" />}
           </button>
 
           <button
-            onClick={() => setMethod('solana')}
+            onClick={() => setRail('solana')}
             className={`w-full flex items-center gap-4 p-5 rounded-2xl border-2 transition-all text-left ${
-              method === 'solana'
+              rail === 'solana'
                 ? 'border-[#efbf04] bg-[#fffdf0] shadow-sm'
                 : 'border-gray-100 bg-white hover:border-[#efbf04]/40'
             }`}
@@ -49,83 +168,183 @@ export default function DepositPage() {
             </div>
             <div>
               <p className="font-bold font-[Alexandria]">Solana Deposit</p>
-              <p className="text-xs text-gray-400 font-[Alexandria] mt-0.5">Fast &amp; low fees</p>
+              <p className="text-xs text-gray-400 font-[Alexandria] mt-0.5">SOL only · fast &amp; low fees</p>
             </div>
-            {method === 'solana' && <div className="ml-auto w-2.5 h-2.5 rounded-full bg-[#efbf04]" />}
+            {rail === 'solana' && <div className="ml-auto w-2.5 h-2.5 rounded-full bg-[#efbf04]" />}
           </button>
         </div>
 
         {/* Right: details panel */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex flex-col gap-5">
-          {method === 'card' ? (
-            <>
-              <div>
-                <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">Card Details</p>
-                <div className="flex flex-col gap-3">
-                  <input
-                    type="text"
-                    placeholder="Cardholder name"
-                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Card number"
-                    maxLength={19}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors"
-                  />
-                  <div className="grid grid-cols-2 gap-3">
-                    <input
-                      type="text"
-                      placeholder="MM / YY"
-                      className="border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors"
-                    />
-                    <input
-                      type="text"
-                      placeholder="CVV"
-                      maxLength={4}
-                      className="border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors"
-                    />
-                  </div>
-                  <input
-                    type="number"
-                    placeholder="Amount (coins)"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors"
-                  />
-                </div>
-              </div>
-              <button className="w-full py-3 rounded-xl bg-[#efbf04] hover:bg-[#d4a800] text-white font-bold font-[Alexandria] text-sm transition-all shadow-sm">
-                Pay Now
-              </button>
-            </>
+          {error && (
+            <p className="text-sm text-red-600 font-[Alexandria]">{error}</p>
+          )}
+
+          {rail === 'polygon' ? (
+            <div>
+              <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">
+                Polygon
+              </p>
+              <p className="text-sm text-gray-600 font-[Alexandria]">
+                Polygon deposits coming soon.
+              </p>
+            </div>
           ) : (
             <>
-              <div>
-                <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">Solana Wallet Address</p>
-                <div className="bg-[#fbf8eb] rounded-xl p-4 break-all font-mono text-xs text-gray-700 select-all">
-                  {solanaAddress}
-                </div>
-                <p className="text-[10px] text-gray-400 font-[Alexandria] mt-2">Send only SOL or SPL tokens to this address. Other assets will be lost.</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">Amount</p>
-                <input
-                  type="number"
-                  placeholder="Amount in SOL"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors"
-                />
-              </div>
-              <div className="bg-[#fff7d6] rounded-xl p-4 flex flex-col gap-1 text-xs font-[Alexandria]">
-                <div className="flex justify-between text-gray-600"><span>Network</span><span className="font-bold text-gray-800">Solana Mainnet</span></div>
-                <div className="flex justify-between text-gray-600"><span>Estimated fee</span><span className="font-bold text-gray-800">~0.000005 SOL</span></div>
-                <div className="flex justify-between text-gray-600"><span>Confirmations needed</span><span className="font-bold text-gray-800">1</span></div>
-              </div>
-              <button className="w-full py-3 rounded-xl bg-[#efbf04] hover:bg-[#d4a800] text-white font-bold font-[Alexandria] text-sm transition-all shadow-sm">
-                Confirm Deposit
-              </button>
+              {step === 'credits' && (
+                <>
+                  <div>
+                    <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">
+                      Credits
+                    </p>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      placeholder="How many credits?"
+                      value={creditsInput}
+                      onChange={(e) => setCreditsInput(e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors"
+                    />
+                    <p className="text-[10px] text-gray-400 font-[Alexandria] mt-2">
+                      Pay with SOL only. Card and other chains are not supported here.
+                    </p>
+                  </div>
+                  <button
+                    onClick={onGetQuote}
+                    disabled={busy}
+                    className="w-full py-3 rounded-xl bg-[#efbf04] hover:bg-[#d4a800] disabled:opacity-60 text-white font-bold font-[Alexandria] text-sm transition-all shadow-sm"
+                  >
+                    Get quote
+                  </button>
+                </>
+              )}
+
+              {step === 'quote' && quote && (
+                <>
+                  <div>
+                    <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">
+                      Quote
+                    </p>
+                    <div className="bg-[#fff7d6] rounded-xl p-4 flex flex-col gap-1 text-xs font-[Alexandria]">
+                      <div className="flex justify-between text-gray-600">
+                        <span>Credits</span>
+                        <span className="font-bold text-gray-800">{quote.credits}</span>
+                      </div>
+                      <div className="flex justify-between text-gray-600">
+                        <span>SOL to send</span>
+                        <span className="font-bold text-gray-800">{quote.amount_sol} SOL</span>
+                      </div>
+                      <div className="flex justify-between text-gray-600">
+                        <span>Included fee</span>
+                        <span className="font-bold text-gray-800">
+                          {(Number(quote.fee) * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-gray-600">
+                        <span>Network</span>
+                        <span className="font-bold text-gray-800">{quote.cluster}</span>
+                      </div>
+                      <div className="flex justify-between text-gray-600">
+                        <span>Valid for</span>
+                        <span className="font-bold text-gray-800">
+                          {formatCountdown(secondsLeft)}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-gray-400 font-[Alexandria] mt-2">
+                      SOL only. Confirm before the timer runs out.
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={onCreateOrder}
+                      disabled={busy || secondsLeft === 0}
+                      className="w-full py-3 rounded-xl bg-[#efbf04] hover:bg-[#d4a800] disabled:opacity-60 text-white font-bold font-[Alexandria] text-sm transition-all shadow-sm"
+                    >
+                      Confirm order
+                    </button>
+                    <button
+                      onClick={onStartOver}
+                      disabled={busy}
+                      className="w-full py-3 rounded-xl bg-white border border-gray-200 hover:bg-[#fbf8eb] hover:border-[#efbf04] disabled:opacity-60 text-gray-800 font-bold font-[Alexandria] text-sm transition-all shadow-sm"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {step === 'pay' && order && (
+                <>
+                  <div>
+                    <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">
+                      Pay with Solana
+                    </p>
+                    <div className="flex flex-col items-center gap-4">
+                      <div className="bg-white p-3 rounded-xl border border-gray-100">
+                        <QRCodeSVG value={order.solana_pay_url} size={200} />
+                      </div>
+                      <a
+                        href={order.solana_pay_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm font-bold font-[Alexandria] text-[#efbf04] hover:text-[#d4a800] underline underline-offset-2"
+                      >
+                        Open in wallet
+                      </a>
+                    </div>
+                  </div>
+                  <div className="bg-[#fff7d6] rounded-xl p-4 flex flex-col gap-1 text-xs font-[Alexandria]">
+                    <div className="flex justify-between text-gray-600">
+                      <span>Amount</span>
+                      <span className="font-bold text-gray-800">{order.amount_sol} SOL</span>
+                    </div>
+                    <div className="flex justify-between text-gray-600">
+                      <span>Status</span>
+                      <span className="font-bold text-gray-800">
+                        {status ?? 'pending'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-gray-600">
+                      <span>Expires in</span>
+                      <span className="font-bold text-gray-800">
+                        {formatCountdown(secondsLeft)}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-gray-400 font-[Alexandria]">
+                    Waiting for payment on Solana. This page checks every few seconds.
+                  </p>
+                  <button
+                    onClick={onStartOver}
+                    className="w-full py-3 rounded-xl bg-white border border-gray-200 hover:bg-[#fbf8eb] hover:border-[#efbf04] text-gray-800 font-bold font-[Alexandria] text-sm transition-all shadow-sm"
+                  >
+                    Cancel
+                  </button>
+                </>
+              )}
+
+              {step === 'paid' && (
+                <>
+                  <div>
+                    <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">
+                      Paid
+                    </p>
+                    <p className="text-sm font-[Alexandria] text-gray-700">
+                      Payment received
+                      {quote ? ` — ${quote.credits} credits added.` : '.'} Your balance
+                      is updated.
+                    </p>
+                  </div>
+                  <button
+                    onClick={onStartOver}
+                    className="w-full py-3 rounded-xl bg-[#efbf04] hover:bg-[#d4a800] text-white font-bold font-[Alexandria] text-sm transition-all shadow-sm"
+                  >
+                    Deposit again
+                  </button>
+                </>
+              )}
             </>
           )}
         </div>

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import ValidationError
 from redis.asyncio import Redis
@@ -137,7 +138,19 @@ async def create_buy_quote(
         chain=body.chain,
         redis=redis,
     )
-    return CreditsQuoteResponse(quote_id=quote.id, expires_at=quote.expires_at)
+    p = quote.payload
+    amount_sol = str(Decimal(p["lamports"]) / Decimal("1000000000"))
+    return CreditsQuoteResponse(
+        quote_id=quote.id,
+        expires_at=quote.expires_at,
+        credits=int(p["credits"]),
+        amount_sol=amount_sol,
+        lamports=int(p["lamports"]),
+        fee=str(p["fee"]),
+        price=str(p["price"]),
+        price_source=str(p["price_source"]),
+        cluster=settings.SOLANA_CLUSTER,
+    )
 
 
 @router.post("/credits/orders", response_model=CreateOrderResponse)
