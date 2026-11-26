@@ -22,6 +22,9 @@ import Backend.Leader_board.model  # noqa: F401  (Leaderboard, relationship on U
 import Backend.Game.models  # noqa: F401  (any Game models referencing Base)
 import pytest
 
+# http://test clients cannot store Secure cookies from login.
+settings.COOKIE_SECURE = False
+
 TEST_DATABASE_URL = settings.TEST_DATABASE_URL
 
 
@@ -119,20 +122,25 @@ def test_app():
 @pytest_asyncio.fixture(loop_scope="session")
 async def auth_user(client):
     # Register user through the API — wallet is created automatically by register_user
-    await client.post("/auth/register", json={
+    reg = await client.post("/auth/register", json={
         "email": "router@example.com",
+        "username": "routeruser",
         "password": "Secret123!",
         "country": "CZ",
         "dob": "2000-01-01"
     })
+    assert reg.status_code == 200, reg.text
 
-    # Login to get JWT
+    # Login sets HttpOnly access_token cookie (body is {"ok": True} only)
     response = await client.post(
         "/auth/login",
         json={"email": "router@example.com", "password": "Secret123!"}
     )
-
-    token = response.json()["access_token"]
+    assert response.status_code == 200, response.text
+    token = response.cookies.get("access_token")
+    assert token, "login did not set access_token cookie"
+    # Ensure subsequent requests authenticate via cookie (auth deps ignore Bearer).
+    client.cookies.set("access_token", token)
 
     return {"token": token}
 
@@ -236,6 +244,8 @@ async def solana_client(engine, test_app):
         transport = ASGITransport(app=test_app)
         try:
             async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                # Auth deps read the access_token cookie (not Authorization header)
+                ac.cookies.set("access_token", token)
                 yield {"client": ac, "token": token, "user_id": user.id}
         finally:
             test_app.dependency_overrides.pop(get_session, None)

@@ -71,3 +71,31 @@ async def test_run_if_leader_empty_factories_stays_on_keep_alive():
 
     leader_task.cancel()
     await asyncio.gather(leader_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_run_if_leader_starts_all_factories():
+    """Payments worker passes a list of job factories; every factory must start."""
+    lock, leadership = _lock_with_stable_leadership()
+    started: list[str] = []
+
+    def make_factory(name: str):
+        async def factory():
+            started.append(name)
+            await asyncio.Event().wait()
+
+        return factory
+
+    factories = [make_factory("poller"), make_factory("expiry"), make_factory("sender")]
+    leader_task = asyncio.create_task(run_if_leader(lock, factories))
+    await leadership.wait()
+
+    for _ in range(100):
+        if len(started) == 3:
+            break
+        await asyncio.sleep(0.01)
+
+    leader_task.cancel()
+    await asyncio.gather(leader_task, return_exceptions=True)
+
+    assert set(started) == {"poller", "expiry", "sender"}
