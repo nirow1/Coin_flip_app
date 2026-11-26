@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -14,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from Backend.Auth.models import User
-from Backend.Core.core_solana import VerifiedSolanaTx
+from Backend.Core.core_solana import MEMO_PROGRAM_IDS, VerifiedSolanaTx
 from Backend.Core.security import hash_password
 from Backend.Wallet.enums import (
     Chain,
@@ -401,3 +402,153 @@ async def test_webhook_and_poller_race_one_credit(engine):
             assert ord_row is not None
             assert ord_row.status == CreditOrderStatus.PAID
             assert ord_row.paid_tx_hash == sig
+
+
+def _fetched_tx(
+    account_keys: list[str],
+    pre_balances: list[int],
+    post_balances: list[int],
+    memo: str,
+    *,
+    err: object | None = None,
+    block_time: int | None = None,
+) -> SimpleNamespace:
+    """Minimal getTransaction value. Real verify/parse run against this."""
+    memo_program = next(iter(MEMO_PROGRAM_IDS))
+    message = SimpleNamespace(
+        account_keys=account_keys,
+        instructions=[
+            SimpleNamespace(program_id=memo_program, data=None, parsed=memo)
+        ],
+    )
+    meta = SimpleNamespace(
+        err=err,
+        pre_balances=pre_balances,
+        post_balances=post_balances,
+        loaded_addresses=SimpleNamespace(writable=[], readonly=[]),
+    )
+    encoded = SimpleNamespace(
+        transaction=SimpleNamespace(message=message),
+        meta=meta,
+    )
+    return SimpleNamespace(
+        transaction=encoded,
+        block_time=block_time if block_time is not None else int(datetime.now(UTC).timestamp()),
+        slot=1,
+    )
+
+
+@pytest.mark.parametrize("mode", ["failed_on_chain", "memo_mismatch"])
+async def test_verify_failure_marks_needs_review_and_does_not_raise(
+    session, test_user, test_wallet, mode
+):
+    """Real verify ValueError after a reference match must not escape."""
+    from Backend.config import settings
+
+    order = await _seed_pending_order(
+        session, user_id=test_user.id, lamports=100_000_000
+    )
+    service = WalletService(session)
+    sig = f"sig-verify-fail-{mode}-{uuid4().hex}"
+    cold = settings.SOLANA_COLD_RECEIVE_ADDRESS
+    sender = str(Keypair().pubkey())
+    memo = order.order_ref if mode == "failed_on_chain" else "not-the-order-ref"
+    err = {"InstructionError": [0, "Custom"]} if mode == "failed_on_chain" else None
+    tx = _fetched_tx(
+        [sender, cold, order.reference_pubkey],
+        [200_000_000, 0, 0],
+        [100_000_000, 100_000_000, 0],
+        memo,
+        err=err,
+    )
+
+    with patch.object(
+        service, "_fetch_finalized_tx", new_callable=AsyncMock, return_value=tx
+    ):
+        await service.process_deposit_signature(sig)
+    await session.flush()
+    await session.refresh(order)
+
+    assert order.status == CreditOrderStatus.NEEDS_REVIEW
+    assert order.review_reason is not None
+    assert order.review_reason.startswith("verify_failed:")
+    assert order.paid_tx_hash == sig
+
+    wallet = await session.scalar(select(Wallet).where(Wallet.user_id == test_user.id))
+    assert wallet is not None
+    assert wallet.balance == Decimal("0.00")
+
+
+async def test_memo_without_reference_does_not_match_order(
+    session, test_user, test_wallet
+):
+    """Memo text alone must not attach a deposit to an order."""
+    from Backend.config import settings
+
+    order = await _seed_pending_order(session, user_id=test_user.id)
+    service = WalletService(session)
+    sig = f"sig-memo-only-{uuid4().hex}"
+    cold = settings.SOLANA_COLD_RECEIVE_ADDRESS
+    sender = str(Keypair().pubkey())
+    tx = _fetched_tx(
+        [sender, cold],
+        [50_000_000, 0],
+        [8_000_000, 42_000_000],
+        order.order_ref,
+    )
+
+    with patch.object(
+        service, "_fetch_finalized_tx", new_callable=AsyncMock, return_value=tx
+    ):
+        await service.process_deposit_signature(sig)
+    await session.flush()
+    await session.refresh(order)
+
+    assert order.status == CreditOrderStatus.PENDING
+    assert order.paid_tx_hash is None
+
+    row = await session.scalar(
+        select(UnmatchedDeposit).where(UnmatchedDeposit.tx_hash == sig)
+    )
+    assert row is not None
+    assert row.status == UnmatchedDepositStatus.OPEN
+    assert row.lamports == 42_000_000
+    assert row.raw_memo == order.order_ref
+
+
+async def test_verify_failure_skips_paid_tx_hash_when_already_used(
+    session, test_user, test_wallet
+):
+    """Unique paid_tx_hash: do not copy a signature that another order already owns."""
+    from Backend.config import settings
+
+    holder = await _seed_pending_order(session, user_id=test_user.id)
+    order = await _seed_pending_order(session, user_id=test_user.id)
+    sig = f"sig-hash-taken-{uuid4().hex}"
+    holder.status = CreditOrderStatus.PAID
+    holder.paid_tx_hash = sig
+    await session.flush()
+
+    service = WalletService(session)
+    cold = settings.SOLANA_COLD_RECEIVE_ADDRESS
+    sender = str(Keypair().pubkey())
+    tx = _fetched_tx(
+        [sender, cold, order.reference_pubkey],
+        [200_000_000, 0, 0],
+        [100_000_000, 100_000_000, 0],
+        "not-the-order-ref",
+    )
+
+    with patch.object(
+        service, "_fetch_finalized_tx", new_callable=AsyncMock, return_value=tx
+    ):
+        await service.process_deposit_signature(sig)
+    await session.flush()
+    await session.refresh(order)
+    await session.refresh(holder)
+
+    assert order.status == CreditOrderStatus.NEEDS_REVIEW
+    assert order.review_reason is not None
+    assert order.review_reason.startswith("verify_failed:")
+    assert order.paid_tx_hash is None
+    assert holder.paid_tx_hash == sig

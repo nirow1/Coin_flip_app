@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -327,14 +328,24 @@ async def run_withdraw_sender(session_factory: async_sessionmaker) -> None:
             logger.exception("withdraw sender tick failed")
         await asyncio.sleep(WITHDRAW_SENDER_INTERVAL_S)
 
+
+@dataclass(frozen=True)
+class _ListedSignature:
+    """One getSignaturesForAddress row, oldest-first after collection."""
+
+    signature: str
+    err: object | None = None
+
+
 async def _collect_signatures_after_cursor(
     client: AsyncClient,
     cold_address: Pubkey,
     until: Signature | None,
-) -> list[str]:
-    """Newest-first pages from RPC → return oldest-first signature strings.
+) -> list[_ListedSignature]:
+    """Newest-first pages from RPC → return oldest-first signature rows.
 
     `until` is the last processed sig: RPC returns only newer ones (excludes `until`).
+    `err` is kept so the poller can skip failed transactions before processing.
     """
     collected = []
     before: Signature | None = None
@@ -356,7 +367,13 @@ async def _collect_signatures_after_cursor(
         before = batch[-1].signature
 
     collected.reverse()
-    return [str(item.signature) for item in collected]
+    return [
+        _ListedSignature(
+            signature=str(item.signature),
+            err=getattr(item, "err", None),
+        )
+        for item in collected
+    ]
 
 
 async def _get_or_create_solana_cursor(session: AsyncSession) -> ChainCursor:
@@ -398,7 +415,7 @@ async def run_cold_deposit_poller(session_factory: async_sessionmaker) -> None:
 
                 # First-ever watermark: skip replaying the entire cold history.
                 if until is None and sigs:
-                    newest = sigs[-1]
+                    newest = sigs[-1].signature
                     async with session_factory() as session:
                         cursor = await _get_or_create_solana_cursor(session)
                         cursor.last_signature = newest
@@ -410,12 +427,18 @@ async def run_cold_deposit_poller(session_factory: async_sessionmaker) -> None:
                         len(sigs),
                     )
                 else:
-                    for sig in sigs:
+                    for item in sigs:
                         async with session_factory() as session:
-                            service = WalletService(session)
-                            await service.process_deposit_signature(sig)
+                            if item.err is not None:
+                                logger.info(
+                                    "skipping failed cold-address signature %s",
+                                    item.signature,
+                                )
+                            else:
+                                service = WalletService(session)
+                                await service.process_deposit_signature(item.signature)
                             cursor = await _get_or_create_solana_cursor(session)
-                            cursor.last_signature = sig
+                            cursor.last_signature = item.signature
                             cursor.updated_at = datetime.now(UTC)
                             await session.commit()
         except asyncio.CancelledError:

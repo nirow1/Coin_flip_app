@@ -641,7 +641,7 @@ class WalletService:
 
         account_keys, memos = self._tx_account_keys_and_memos(tx)
         lamports = self._cold_lamports_delta(tx, account_keys)
-        order = await self._find_order_for_tx(account_keys, memos)
+        order = await self._find_order_for_tx(account_keys)
 
         if order is None:
             block_time_raw = getattr(tx, "block_time", None) or getattr(tx, "blockTime", None)
@@ -677,14 +677,20 @@ class WalletService:
         if order.paid_tx_hash == tx_signature or order.status == CreditOrderStatus.PAID:
             return
 
-        verified = verify_fetched_solana_transaction(
-            tx,
-            tx_hash=tx_signature,
-            expected_destination=order.receive_address,
-            expected_lamports=0,
-            expected_memo=order.order_ref,
-            expected_reference=order.reference_pubkey,
-        )
+        try:
+            verified = verify_fetched_solana_transaction(
+                tx,
+                tx_hash=tx_signature,
+                expected_destination=order.receive_address,
+                expected_lamports=0,
+                expected_memo=order.order_ref,
+                expected_reference=order.reference_pubkey,
+            )
+        except ValueError as exc:
+            # Do not raise: the cold-address poller would keep this signature
+            # as the cursor and never reach later deposits.
+            await self._mark_verify_failed(order, tx_signature, exc)
+            return
 
         order.received_atomic_amount = verified.received_lamports
 
@@ -743,23 +749,38 @@ class WalletService:
             )
         return resp.value
 
-    async def _find_order_for_tx(
-        self, account_keys: list[str], memos: list[str]
-    ) -> CreditOrder | None:
-        result = await self.session.execute(
-            select(CreditOrder)
-            .where(CreditOrder.reference_pubkey.in_(account_keys))
-            .order_by(CreditOrder.id.asc())
+    async def _mark_verify_failed(
+        self, order: CreditOrder, tx_signature: str, exc: ValueError
+    ) -> None:
+        """Park a matched deposit in NEEDS_REVIEW. Never raise."""
+        logger.warning(
+            "deposit %s matched order %s but failed verification: %s",
+            tx_signature,
+            order.id,
+            exc,
+        )
+        order.status = CreditOrderStatus.NEEDS_REVIEW
+        detail = " ".join(str(exc).split())
+        order.review_reason = f"verify_failed:{detail}"[:500]
+        if order.paid_at is None:
+            order.paid_at = datetime.now(UTC)
+        if order.paid_tx_hash is not None:
+            return
+        taken = await self.session.scalar(
+            select(CreditOrder.id)
+            .where(CreditOrder.paid_tx_hash == tx_signature)
             .limit(1)
         )
-        order = result.scalar_one_or_none()
-        if order is not None:
-            return order
-        if not memos:
+        if taken is None:
+            order.paid_tx_hash = tx_signature
+
+    async def _find_order_for_tx(self, account_keys: list[str]) -> CreditOrder | None:
+        """Match Solana Pay reference only. Memo is checked later in verify."""
+        if not account_keys:
             return None
         result = await self.session.execute(
             select(CreditOrder)
-            .where(CreditOrder.order_ref.in_(memos))
+            .where(CreditOrder.reference_pubkey.in_(account_keys))
             .order_by(CreditOrder.id.asc())
             .limit(1)
         )
