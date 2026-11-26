@@ -17,6 +17,8 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 # Member names (QUEUED/…), matching SQLAlchemy Enum(...) + Chain/QuoteKind migrations.
+# create_type=False: types are created explicitly below; otherwise create_table
+# emits a second CREATE TYPE and fails with "already exists".
 withdrawal_status = sa.Enum(
     "QUEUED",
     "SIGNED",
@@ -25,11 +27,13 @@ withdrawal_status = sa.Enum(
     "FAILED_REFUNDED",
     "NEEDS_REVIEW",
     name="withdrawalstatus",
+    create_type=False,
 )
 withdraw_asset = sa.Enum(
     "SOL",
     "USDC",
     name="withdrawasset",
+    create_type=False,
 )
 
 
