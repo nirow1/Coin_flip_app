@@ -674,7 +674,21 @@ class WalletService:
         )
         order = locked.scalar_one()
 
-        if order.paid_tx_hash == tx_signature or order.status == CreditOrderStatus.PAID:
+        # Same signature already stored on the order: unique no-op.
+        if order.paid_tx_hash == tx_signature:
+            return
+
+        # A different payment after the order left PENDING must not overwrite
+        # paid_tx_hash / amounts. Keep an audit row instead.
+        if order.status != CreditOrderStatus.PENDING:
+            await self._record_extra_payment(
+                order,
+                tx_signature,
+                lamports,
+                account_keys,
+                memos,
+                tx,
+            )
             return
 
         try:
@@ -711,7 +725,7 @@ class WalletService:
         under = received < quoted
         over = received > max_ok
 
-        if under or over or late or order.status != CreditOrderStatus.PENDING:
+        if under or over or late:
             order.status = CreditOrderStatus.NEEDS_REVIEW
             order.paid_tx_hash = tx_signature
             order.paid_at = paid_at_block or datetime.now(UTC)
@@ -719,10 +733,8 @@ class WalletService:
                 order.review_reason = "underpaid"
             elif over:
                 order.review_reason = "overpaid"
-            elif late:
-                order.review_reason = "late"
             else:
-                order.review_reason = f"unexpected_status:{order.status.value}"
+                order.review_reason = "late"
             return
 
         order.status = CreditOrderStatus.PAID
@@ -738,6 +750,42 @@ class WalletService:
             await self.session.flush()
         except IntegrityError:
             await self.session.rollback()
+
+    async def _record_extra_payment(
+        self,
+        order: CreditOrder,
+        tx_signature: str,
+        lamports: int,
+        account_keys: list[str],
+        memos: list[str],
+        tx,
+    ) -> None:
+        """Insert an OPEN unmatched row for a second signature. Duplicate tx_hash is a no-op."""
+        block_time_raw = getattr(tx, "block_time", None) or getattr(tx, "blockTime", None)
+        block_time = (
+            datetime.fromtimestamp(int(block_time_raw), UTC)
+            if block_time_raw is not None
+            else None
+        )
+        # Savepoint: a unique violation rolls back only this insert, not the order.
+        try:
+            async with self.session.begin_nested():
+                self.session.add(
+                    UnmatchedDeposit(
+                        tx_hash=tx_signature,
+                        lamports=lamports,
+                        raw_memo=memos[0] if memos else None,
+                        sender=account_keys[0] if account_keys else None,
+                        chain=Chain.SOLANA,
+                        reference_pubkey=order.reference_pubkey,
+                        block_time=block_time,
+                        resolved_order_id=order.id,
+                        status=UnmatchedDepositStatus.OPEN,
+                    )
+                )
+                await self.session.flush()
+        except IntegrityError:
+            return
 
     async def _fetch_finalized_tx(self, tx_signature: str):
         async with AsyncClient(settings.SOLANA_RPC_URL, timeout=_RPC_TIMEOUT_SEC) as client:

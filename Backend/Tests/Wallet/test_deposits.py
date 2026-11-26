@@ -113,6 +113,7 @@ async def _process_matched(
     block_time: int | None,
 ) -> None:
     fake_tx = MagicMock()
+    fake_tx.block_time = block_time
     keys = [order.reference_pubkey, order.receive_address]
     memos = [order.order_ref]
 
@@ -552,3 +553,96 @@ async def test_verify_failure_skips_paid_tx_hash_when_already_used(
     assert order.review_reason.startswith("verify_failed:")
     assert order.paid_tx_hash is None
     assert holder.paid_tx_hash == sig
+
+
+async def test_second_signature_on_paid_order_is_unmatched(
+    session, test_user, test_wallet
+):
+    """A later distinct signature must be audited, not dropped, and not credited twice."""
+    order = await _seed_pending_order(session, user_id=test_user.id, lamports=100_000_000)
+    service = WalletService(session)
+    first = f"sig-paid-first-{uuid4().hex}"
+    second = f"sig-paid-second-{uuid4().hex}"
+    now_ts = int(datetime.now(UTC).timestamp())
+
+    await _process_matched(
+        service, order, sig=first, received=100_000_000, block_time=now_ts
+    )
+    await session.flush()
+    await _process_matched(
+        service, order, sig=second, received=80_000_000, block_time=now_ts
+    )
+    await session.flush()
+    await _process_matched(
+        service, order, sig=second, received=80_000_000, block_time=now_ts
+    )
+    await session.flush()
+
+    await session.refresh(order)
+    assert order.status == CreditOrderStatus.PAID
+    assert order.paid_tx_hash == first
+
+    wallet = await session.scalar(select(Wallet).where(Wallet.user_id == test_user.id))
+    assert wallet is not None
+    assert wallet.balance == Decimal("10.00")
+
+    extra_count = await session.scalar(
+        select(func.count())
+        .select_from(UnmatchedDeposit)
+        .where(UnmatchedDeposit.tx_hash == second)
+    )
+    assert extra_count == 1
+    row = await session.scalar(
+        select(UnmatchedDeposit).where(UnmatchedDeposit.tx_hash == second)
+    )
+    assert row is not None
+    assert row.status == UnmatchedDepositStatus.OPEN
+    assert row.resolved_order_id == order.id
+    assert row.lamports == 80_000_000
+
+    first_row = await session.scalar(
+        select(UnmatchedDeposit).where(UnmatchedDeposit.tx_hash == first)
+    )
+    assert first_row is None
+
+
+async def test_second_signature_on_needs_review_preserves_paid_fields(
+    session, test_user, test_wallet
+):
+    """A second signature while NEEDS_REVIEW must not overwrite the first payment."""
+    order = await _seed_pending_order(session, user_id=test_user.id, lamports=100_000_000)
+    service = WalletService(session)
+    first = f"sig-review-first-{uuid4().hex}"
+    second = f"sig-review-second-{uuid4().hex}"
+    now_ts = int(datetime.now(UTC).timestamp())
+
+    await _process_matched(
+        service, order, sig=first, received=50_000_000, block_time=now_ts
+    )
+    await session.flush()
+    await session.refresh(order)
+    assert order.status == CreditOrderStatus.NEEDS_REVIEW
+    assert order.review_reason == "underpaid"
+
+    await _process_matched(
+        service, order, sig=second, received=100_000_000, block_time=now_ts
+    )
+    await session.flush()
+    await session.refresh(order)
+
+    assert order.status == CreditOrderStatus.NEEDS_REVIEW
+    assert order.paid_tx_hash == first
+    assert order.review_reason == "underpaid"
+    assert order.received_atomic_amount == 50_000_000
+
+    row = await session.scalar(
+        select(UnmatchedDeposit).where(UnmatchedDeposit.tx_hash == second)
+    )
+    assert row is not None
+    assert row.status == UnmatchedDepositStatus.OPEN
+    assert row.resolved_order_id == order.id
+    assert row.lamports == 100_000_000
+
+    wallet = await session.scalar(select(Wallet).where(Wallet.user_id == test_user.id))
+    assert wallet is not None
+    assert wallet.balance == Decimal("0.00")

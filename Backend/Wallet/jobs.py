@@ -40,6 +40,15 @@ WITHDRAW_SENDER_INTERVAL_S = 5.0
 WITHDRAW_RECONCILE_INTERVAL_S = 15.0
 
 
+def _is_finalized_confirmation(confirmation_status: object) -> bool:
+    """True only for solders/RPC finalized. processed and confirmed can still fork."""
+    if confirmation_status is None:
+        return False
+    # solders str is "TransactionConfirmationStatus.Finalized"; RPC JSON is "finalized".
+    label = str(confirmation_status).rsplit(".", 1)[-1].strip().lower()
+    return label == "finalized"
+
+
 async def _reconcile_withdrawal(session: AsyncSession, withdrawal: Withdrawal) -> None:
     """Apply finding-2 rules to a SIGNED or BROADCAST row. CAS status updates only."""
     if not withdrawal.signature or withdrawal.last_valid_block_height is None:
@@ -92,7 +101,16 @@ async def _reconcile_withdrawal(session: AsyncSession, withdrawal: Withdrawal) -
             if getattr(on_chain, "err", None) is not None:
                 await _refund_withdrawal(session, withdrawal)
                 return
-            # Landed OK
+            # processed/confirmed can still be reorged. Only finalized is final.
+            if not _is_finalized_confirmation(
+                getattr(on_chain, "confirmation_status", None)
+            ):
+                logger.info(
+                    "withdrawal %s on-chain but not finalized (%s); waiting",
+                    withdrawal.id,
+                    getattr(on_chain, "confirmation_status", None),
+                )
+                return
             await session.execute(
                 update(Withdrawal)
                 .where(
@@ -240,7 +258,23 @@ async def _persist_signed_withdrawal(session: AsyncSession, withdrawal: Withdraw
 async def _broadcast_persisted_withdrawal(session: AsyncSession, withdrawal: Withdrawal) -> None:
     """Broadcast already-persisted bytes; CAS SIGNED → BROADCAST/CONFIRMED."""
     if not withdrawal.raw_tx or not withdrawal.signature or withdrawal.last_valid_block_height is None:
-        logger.error("withdrawal %s SIGNED but missing raw_tx/signature/height", withdrawal.id)
+        # Incomplete SIGNED rows cannot be broadcast. Leave them for a human
+        # instead of selecting the same id on every tick.
+        logger.error(
+            "withdrawal %s SIGNED but missing raw_tx/signature/height → needs_review",
+            withdrawal.id,
+        )
+        await session.execute(
+            update(Withdrawal)
+            .where(
+                Withdrawal.id == withdrawal.id,
+                Withdrawal.status == WithdrawalStatus.SIGNED,
+            )
+            .values(
+                status=WithdrawalStatus.NEEDS_REVIEW,
+                updated_at=datetime.now(UTC),
+            )
+        )
         return
     
     try:
@@ -282,46 +316,44 @@ async def run_withdraw_sender(session_factory: async_sessionmaker) -> None:
     """Sign → persist → commit → broadcast. Skips while WITHDRAWALS_ENABLED is False."""
     while True:
         try:
-            if not settings.WITHDRAWALS_ENABLED:
-                await asyncio.sleep(WITHDRAW_SENDER_INTERVAL_S)
-                continue
-
-            async with session_factory() as session:
-                # Crash recovery: finish broadcast for already-SIGNED rows first
-                signed = await session.scalar(
-                    select(Withdrawal)
-                    .where(Withdrawal.status == WithdrawalStatus.SIGNED)
-                    .order_by(Withdrawal.id.asc())
-                    .limit(1)
-                )
-                if signed is not None:
-                    await _broadcast_persisted_withdrawal(session, signed)
-                    await session.commit()
-                    continue
-
-                queued = await session.scalar(
-                    select(Withdrawal)
-                    .where(Withdrawal.status == WithdrawalStatus.QUEUED)
-                    .order_by(Withdrawal.id.asc())
-                    .limit(1)
-                )
-                if queued is None:
-                    await session.commit()
-                else:
-                    # Detach ids/fields we need after sign (RPC outside long locks)
-                    wid = queued.id
-                    claimed = await _persist_signed_withdrawal(session, queued)
-                    if not claimed:
-                        await session.rollback()
-                    else:
+            if settings.WITHDRAWALS_ENABLED:
+                async with session_factory() as session:
+                    # Crash recovery: finish broadcast for already-SIGNED rows first.
+                    # Do not `continue` here — that skipped the interval sleep and
+                    # tight-looped a SIGNED row that could not be broadcast.
+                    signed = await session.scalar(
+                        select(Withdrawal)
+                        .where(Withdrawal.status == WithdrawalStatus.SIGNED)
+                        .order_by(Withdrawal.id.asc())
+                        .limit(1)
+                    )
+                    if signed is not None:
+                        await _broadcast_persisted_withdrawal(session, signed)
                         await session.commit()
-                        async with session_factory() as session2:
-                            row = await session2.scalar(
-                                select(Withdrawal).where(Withdrawal.id == wid)
-                            )
-                            if row is not None and row.status == WithdrawalStatus.SIGNED:
-                                await _broadcast_persisted_withdrawal(session2, row)
-                                await session2.commit()
+                    else:
+                        queued = await session.scalar(
+                            select(Withdrawal)
+                            .where(Withdrawal.status == WithdrawalStatus.QUEUED)
+                            .order_by(Withdrawal.id.asc())
+                            .limit(1)
+                        )
+                        if queued is None:
+                            await session.commit()
+                        else:
+                            # Detach ids/fields we need after sign (RPC outside long locks)
+                            wid = queued.id
+                            claimed = await _persist_signed_withdrawal(session, queued)
+                            if not claimed:
+                                await session.rollback()
+                            else:
+                                await session.commit()
+                                async with session_factory() as session2:
+                                    row = await session2.scalar(
+                                        select(Withdrawal).where(Withdrawal.id == wid)
+                                    )
+                                    if row is not None and row.status == WithdrawalStatus.SIGNED:
+                                        await _broadcast_persisted_withdrawal(session2, row)
+                                        await session2.commit()
         except asyncio.CancelledError:
             raise
         except Exception:

@@ -4,17 +4,24 @@ DB-backed cases use Wallet conftest (Postgres TEST_DATABASE_URL).
 Pure unit cases run without a database.
 """
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 from solders.keypair import Keypair
+from solders.transaction_status import TransactionConfirmationStatus
 from sqlalchemy import func, select
 
-from Backend.Core.core_solana import SentUnconfirmed
+from Backend.Core.core_solana import (
+    SendFailedOnChain,
+    SendFailedRefundable,
+    SentUnconfirmed,
+)
 from Backend.Wallet.enums import (
     Chain,
     QuoteKind,
@@ -23,8 +30,10 @@ from Backend.Wallet.enums import (
     WithdrawalStatus,
 )
 from Backend.Wallet.jobs import (
+    WITHDRAW_SENDER_INTERVAL_S,
     _broadcast_persisted_withdrawal,
     _reconcile_withdrawal,
+    run_withdraw_sender,
 )
 from Backend.Wallet.models import PaymentQuote, Transaction, Wallet, Withdrawal
 from Backend.Wallet.router import require_withdrawals_enabled
@@ -132,6 +141,150 @@ async def test_expired_absent_signature_refunds():
     kwargs = service_cls.return_value.credit.await_args.kwargs
     assert kwargs["transaction_type"] == TransactionType.REFUND
     assert kwargs["tx_hash"] == "withdraw-refund:8"
+
+
+def _assigned_status(stmt):
+    for column, bind in getattr(stmt, "_values", {}).items():
+        key = getattr(column, "key", None)
+        if key == "status":
+            return getattr(bind, "value", bind)
+    return stmt.compile().params.get("status")
+
+
+async def test_processed_signature_does_not_confirm_or_refund():
+    """confirmation_status=processed is not final — leave the row alone."""
+    withdrawal = MagicMock()
+    withdrawal.id = 11
+    withdrawal.signature = "c" * 64
+    withdrawal.last_valid_block_height = 500
+    withdrawal.status = WithdrawalStatus.BROADCAST
+    withdrawal.user_id = 1
+    withdrawal.credits_debited = Decimal("10.00")
+
+    session = AsyncMock()
+    session.execute = AsyncMock()
+
+    on_chain = SimpleNamespace(
+        err=None,
+        confirmation_status=TransactionConfirmationStatus.Processed,
+    )
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.get_signature_statuses.return_value.value = [on_chain]
+
+    with (
+        patch("Backend.Wallet.jobs.AsyncClient", return_value=mock_client),
+        patch("Backend.Wallet.jobs.WalletService") as service_cls,
+    ):
+        await _reconcile_withdrawal(session, withdrawal)
+
+    session.execute.assert_not_awaited()
+    service_cls.assert_not_called()
+    mock_client.get_block_height.assert_not_called()
+
+
+async def test_finalized_signature_confirms():
+    withdrawal = MagicMock()
+    withdrawal.id = 12
+    withdrawal.signature = "d" * 64
+    withdrawal.last_valid_block_height = 500
+    withdrawal.status = WithdrawalStatus.BROADCAST
+    withdrawal.user_id = 1
+    withdrawal.credits_debited = Decimal("10.00")
+
+    session = AsyncMock()
+    session.execute = AsyncMock()
+
+    on_chain = SimpleNamespace(
+        err=None,
+        confirmation_status=TransactionConfirmationStatus.Finalized,
+    )
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.get_signature_statuses.return_value.value = [on_chain]
+
+    with (
+        patch("Backend.Wallet.jobs.AsyncClient", return_value=mock_client),
+        patch("Backend.Wallet.jobs.WalletService") as service_cls,
+    ):
+        await _reconcile_withdrawal(session, withdrawal)
+
+    service_cls.assert_not_called()
+    mock_client.get_block_height.assert_not_called()
+    session.execute.assert_awaited_once()
+    assert _assigned_status(session.execute.await_args.args[0]) == WithdrawalStatus.CONFIRMED
+
+
+async def test_signed_without_raw_tx_moves_to_needs_review():
+    withdrawal = MagicMock()
+    withdrawal.id = 13
+    withdrawal.raw_tx = None
+    withdrawal.signature = "sig-base58"
+    withdrawal.last_valid_block_height = 100
+    withdrawal.status = WithdrawalStatus.SIGNED
+
+    session = AsyncMock()
+    session.execute = AsyncMock()
+
+    with patch(
+        "Backend.Wallet.jobs.broadcast_and_confirm",
+        new_callable=AsyncMock,
+    ) as broadcast:
+        await _broadcast_persisted_withdrawal(session, withdrawal)
+
+    broadcast.assert_not_awaited()
+    session.execute.assert_awaited_once()
+    assert (
+        _assigned_status(session.execute.await_args.args[0])
+        == WithdrawalStatus.NEEDS_REVIEW
+    )
+
+
+@pytest.mark.parametrize("exc_type", [SendFailedOnChain, SendFailedRefundable])
+async def test_failed_send_sleeps_instead_of_spinning(exc_type):
+    """A SIGNED broadcast failure must wait out the sender interval."""
+    withdrawal = MagicMock()
+    withdrawal.id = 14
+    withdrawal.raw_tx = b"persisted-signed-bytes-v1"
+    withdrawal.signature = "sig-base58"
+    withdrawal.last_valid_block_height = 100
+    withdrawal.status = WithdrawalStatus.SIGNED
+
+    session = AsyncMock()
+    session.scalar = AsyncMock(return_value=withdrawal)
+    session.execute = AsyncMock()
+
+    class _SessionCM:
+        async def __aenter__(self):
+            return session
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    slept: list[float] = []
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+        raise asyncio.CancelledError
+
+    with (
+        patch("Backend.Wallet.jobs.settings") as mock_settings,
+        patch(
+            "Backend.Wallet.jobs.broadcast_and_confirm",
+            new_callable=AsyncMock,
+            side_effect=exc_type("sig-base58"),
+        ),
+        patch("Backend.Wallet.jobs.asyncio.sleep", side_effect=fake_sleep),
+    ):
+        mock_settings.WITHDRAWALS_ENABLED = True
+        mock_settings.SOLANA_RPC_URL = "http://rpc.test"
+        with pytest.raises(asyncio.CancelledError):
+            await run_withdraw_sender(lambda: _SessionCM())
+
+    assert slept == [WITHDRAW_SENDER_INTERVAL_S]
+    session.execute.assert_not_awaited()
 
 
 # --- Integration (Postgres) -------------------------------------------------
