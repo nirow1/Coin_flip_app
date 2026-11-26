@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from Backend.Wallet.router import router as wallet_router
 from Backend.Auth.router import router as auth_router
@@ -6,7 +6,7 @@ from httpx import AsyncClient, ASGITransport
 from Backend.Core.security import hash_password, create_access_token
 from typing import AsyncGenerator
 from Backend.db import Base, get_session
-from Backend.Wallet.models import Wallet, UserSolanaWallet
+from Backend.Wallet.models import Wallet
 from sqlalchemy import select
 from Backend.Auth.models import User
 from fastapi import FastAPI
@@ -22,9 +22,10 @@ import Backend.Leader_board.model  # noqa: F401  (Leaderboard, relationship on U
 import Backend.Game.models  # noqa: F401  (any Game models referencing Base)
 import pytest
 
-TEST_DATABASE_URL = settings.TEST_DATABASE_URL
+# http://test clients cannot store Secure cookies from login.
+settings.COOKIE_SECURE = False
 
-FAKE_SOLANA_ADDRESS = "So11111111111111111111111111111111111111112"
+TEST_DATABASE_URL = settings.TEST_DATABASE_URL
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
@@ -112,6 +113,7 @@ async def client(test_app, engine):
 @pytest.fixture(scope="session")
 def test_app():
     app = FastAPI()
+    app.state.solana_payments_enabled = True
     app.include_router(auth_router, prefix="/auth")
     app.include_router(wallet_router)
     return app
@@ -120,20 +122,25 @@ def test_app():
 @pytest_asyncio.fixture(loop_scope="session")
 async def auth_user(client):
     # Register user through the API — wallet is created automatically by register_user
-    await client.post("/auth/register", json={
+    reg = await client.post("/auth/register", json={
         "email": "router@example.com",
+        "username": "routeruser",
         "password": "Secret123!",
         "country": "CZ",
         "dob": "2000-01-01"
     })
+    assert reg.status_code == 200, reg.text
 
-    # Login to get JWT
+    # Login sets HttpOnly access_token cookie (body is {"ok": True} only)
     response = await client.post(
         "/auth/login",
         json={"email": "router@example.com", "password": "Secret123!"}
     )
-
-    token = response.json()["access_token"]
+    assert response.status_code == 200, response.text
+    token = response.cookies.get("access_token")
+    assert token, "login did not set access_token cookie"
+    # Ensure subsequent requests authenticate via cookie (auth deps ignore Bearer).
+    client.cookies.set("access_token", token)
 
     return {"token": token}
 
@@ -180,11 +187,10 @@ def mock_signature():
 
 @pytest.fixture()
 def mock_keypair():
-    """Mocks Keypair.from_json and the keypair file read."""
+    """Mocks hot keypair load from settings secret store."""
     keypair = MagicMock()
     keypair.pubkey.return_value = MagicMock()
-    with patch("builtins.open", mock_open(read_data='["fake_keypair_json"]')), \
-         patch("Backend.Core.core_solana.Keypair.from_json", return_value=keypair):
+    with patch("Backend.Core.core_solana.Keypair.from_json", return_value=keypair):
         yield keypair
 
 
@@ -192,38 +198,36 @@ def mock_keypair():
 async def solana_client(engine, test_app):
     """
     Provides an AsyncClient with:
-      - a committed User, Wallet, and UserSolanaWallet in the DB
+      - a committed User and Wallet in the DB
       - get_session overridden to use a rolled-back test connection
       - a pre-built JWT token for the user
-    Returns a dict: {"client": AsyncClient, "token": str, "public_key": str, "user_id": int}
+    Returns a dict: {"client": AsyncClient, "token": str, "user_id": int}
     """
     # --- Commit real data so it's visible across connections ---
     async with engine.connect() as setup_conn:
         await setup_conn.begin()
         sf = async_sessionmaker(bind=setup_conn, expire_on_commit=False)
         async with sf() as s:
-            user = User(
-                email="solana_deposit@example.com",
-                password_hash=hash_password("Secret123!"),
-                country="CZ",
-                dob=date(2000, 1, 1),
+            user = await s.scalar(
+                select(User).where(User.email == "solana_deposit@example.com")
             )
-            s.add(user)
-            await s.flush()
+            if user is None:
+                user = User(
+                    email="solana_deposit@example.com",
+                    password_hash=hash_password("Secret123!"),
+                    country="CZ",
+                    dob=date(2000, 1, 1),
+                )
+                s.add(user)
+                await s.flush()
+                s.add(Wallet(user_id=user.id, balance=Decimal("0.00")))
+                await s.flush()
+            elif await s.scalar(select(Wallet).where(Wallet.user_id == user.id)) is None:
+                s.add(Wallet(user_id=user.id, balance=Decimal("0.00")))
+                await s.flush()
 
-            wallet = Wallet(user_id=user.id, balance=Decimal("0.00"))
-            s.add(wallet)
-            await s.flush()
-
-            solana_wallet = UserSolanaWallet(
-                user_id=user.id,
-                public_key=FAKE_SOLANA_ADDRESS,
-                private_key_encrypted=b"dummy",
-            )
-            s.add(solana_wallet)
             await s.commit()
             await s.refresh(user)
-            await s.refresh(wallet)
 
         await setup_conn.commit()
 
@@ -244,8 +248,9 @@ async def solana_client(engine, test_app):
         transport = ASGITransport(app=test_app)
         try:
             async with AsyncClient(transport=transport, base_url="http://test") as ac:
-                yield {"client": ac, "token": token,
-                       "public_key": FAKE_SOLANA_ADDRESS, "user_id": user.id}
+                # Auth deps read the access_token cookie (not Authorization header)
+                ac.cookies.set("access_token", token)
+                yield {"client": ac, "token": token, "user_id": user.id}
         finally:
             test_app.dependency_overrides.pop(get_session, None)
             await conn.rollback()

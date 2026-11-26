@@ -133,7 +133,7 @@ async def test_refresh_wrong_type_returns_401(client):
             "session_started": int(datetime.now(timezone.utc).timestamp()),
             "exp": datetime.now(timezone.utc) + timedelta(days=1),
         },
-        settings.JWT_REFRESH_SECRET,
+        settings.JWT_REFRESH_SECRET.get_secret_value(),
         algorithm=settings.JWT_ALGORITHM,
     )
     _set_refresh_cookie(client, bad)
@@ -156,7 +156,7 @@ async def test_refresh_expired_refresh_returns_401(client):
             "session_started": int(datetime.now(timezone.utc).timestamp()),
             "exp": datetime.now(timezone.utc) - timedelta(hours=1),
         },
-        settings.JWT_REFRESH_SECRET,
+        settings.JWT_REFRESH_SECRET.get_secret_value(),
         algorithm=settings.JWT_ALGORITHM,
     )
     _set_refresh_cookie(client, expired)
@@ -227,7 +227,7 @@ async def test_access_path_rejects_missing_type(client):
             "sub": str(user_id),
             "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
         },
-        settings.JWT_SECRET,
+        settings.JWT_SECRET.get_secret_value(),
         algorithm=settings.JWT_ALGORITHM,
     )
     _set_access_cookie(client, no_type)

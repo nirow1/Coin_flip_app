@@ -1,8 +1,7 @@
 import { useState } from 'react';
 
 export default function WithdrawPage() {
-  const [method, setMethod] = useState<'bank' | 'solana'>('bank');
-  const [amount, setAmount] = useState('');
+  const [rail, setRail] = useState<'solana' | 'polygon'>('solana');
 
   return (
     <div className="p-6 max-w-7xl text-gray-900">
@@ -12,9 +11,9 @@ export default function WithdrawPage() {
         {/* Left: method selector */}
         <div className="flex flex-col gap-3">
           <button
-            onClick={() => setMethod('bank')}
+            onClick={() => setRail('polygon')}
             className={`w-full flex items-center gap-4 p-5 rounded-2xl border-2 transition-all text-left ${
-              method === 'bank'
+              rail === 'polygon'
                 ? 'border-[#efbf04] bg-[#fffdf0] shadow-sm'
                 : 'border-gray-100 bg-white hover:border-[#efbf04]/40'
             }`}
@@ -25,16 +24,16 @@ export default function WithdrawPage() {
               </svg>
             </div>
             <div>
-              <p className="font-bold font-[Alexandria]">Bank Transfer</p>
-              <p className="text-xs text-gray-400 font-[Alexandria] mt-0.5">IBAN / SWIFT transfer</p>
+              <p className="font-bold font-[Alexandria]">Polygon Withdraw</p>
+              <p className="text-xs text-gray-400 font-[Alexandria] mt-0.5">USDC · coming soon</p>
             </div>
-            {method === 'bank' && <div className="ml-auto w-2.5 h-2.5 rounded-full bg-[#efbf04]" />}
+            {rail === 'polygon' && <div className="ml-auto w-2.5 h-2.5 rounded-full bg-[#efbf04]" />}
           </button>
 
           <button
-            onClick={() => setMethod('solana')}
+            onClick={() => setRail('solana')}
             className={`w-full flex items-center gap-4 p-5 rounded-2xl border-2 transition-all text-left ${
-              method === 'solana'
+              rail === 'solana'
                 ? 'border-[#efbf04] bg-[#fffdf0] shadow-sm'
                 : 'border-gray-100 bg-white hover:border-[#efbf04]/40'
             }`}
@@ -48,55 +47,42 @@ export default function WithdrawPage() {
             </div>
             <div>
               <p className="font-bold font-[Alexandria]">Solana Withdraw</p>
-              <p className="text-xs text-gray-400 font-[Alexandria] mt-0.5">Fast &amp; low fees</p>
+              <p className="text-xs text-gray-400 font-[Alexandria] mt-0.5">Coming soon</p>
             </div>
-            {method === 'solana' && <div className="ml-auto w-2.5 h-2.5 rounded-full bg-[#efbf04]" />}
+            {rail === 'solana' && <div className="ml-auto w-2.5 h-2.5 rounded-full bg-[#efbf04]" />}
           </button>
         </div>
 
         {/* Right: details panel */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex flex-col gap-5">
-          {method === 'bank' ? (
-            <>
-              <div>
-                <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">Bank Details</p>
-                <div className="flex flex-col gap-3">
-                  <input type="text" placeholder="Account holder name" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors" />
-                  <input type="text" placeholder="IBAN" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors" />
-                  <input type="text" placeholder="SWIFT / BIC" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors" />
-                  <input type="text" placeholder="Bank name" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors" />
-                  <input type="number" placeholder="Amount (coins)" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors" />
-                </div>
-              </div>
-              <div className="bg-[#fff7d6] rounded-xl p-4 flex flex-col gap-1 text-xs font-[Alexandria]">
-                <div className="flex justify-between text-gray-600"><span>Processing time</span><span className="font-bold text-gray-800">1–3 business days</span></div>
-                <div className="flex justify-between text-gray-600"><span>Minimum withdrawal</span><span className="font-bold text-gray-800">500 coins</span></div>
-                <div className="flex justify-between text-gray-600"><span>Fee</span><span className="font-bold text-gray-800">1.5%</span></div>
-              </div>
-              <button className="w-full py-3 rounded-xl bg-[#efbf04] hover:bg-[#d4a800] text-white font-bold font-[Alexandria] text-sm transition-all shadow-sm">
-                Request Withdrawal
-              </button>
-            </>
+          {rail === 'polygon' ? (
+            <div>
+              <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">
+                Polygon
+              </p>
+              <p className="text-sm text-gray-600 font-[Alexandria]">
+                Polygon withdrawals coming soon.
+              </p>
+            </div>
           ) : (
-            <>
-              <div>
-                <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">Your Solana Address</p>
-                <input type="text" placeholder="Paste your SOL wallet address" className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-mono outline-none focus:border-[#efbf04] transition-colors" />
-                <p className="text-[10px] text-gray-400 font-[Alexandria] mt-2">Double-check your address. Withdrawals to wrong addresses cannot be recovered.</p>
-              </div>
-              <div>
-                <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">Amount</p>
-                <input type="number" placeholder="Amount in SOL" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-[Alexandria] outline-none focus:border-[#efbf04] transition-colors" />
-              </div>
-              <div className="bg-[#fff7d6] rounded-xl p-4 flex flex-col gap-1 text-xs font-[Alexandria]">
-                <div className="flex justify-between text-gray-600"><span>Network</span><span className="font-bold text-gray-800">Solana Mainnet</span></div>
-                <div className="flex justify-between text-gray-600"><span>Estimated fee</span><span className="font-bold text-gray-800">~0.000005 SOL</span></div>
-                <div className="flex justify-between text-gray-600"><span>Processing time</span><span className="font-bold text-gray-800">~30 seconds</span></div>
-              </div>
-              <button className="w-full py-3 rounded-xl bg-[#efbf04] hover:bg-[#d4a800] text-white font-bold font-[Alexandria] text-sm transition-all shadow-sm">
-                Confirm Withdrawal
+            <div>
+              <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">
+                Solana
+              </p>
+              <p className="text-sm text-gray-600 font-[Alexandria]">
+                Withdrawals coming soon.
+              </p>
+              <p className="text-[10px] text-gray-400 font-[Alexandria] mt-2">
+                Solana payouts are built on the backend but not enabled yet.
+              </p>
+              <button
+                type="button"
+                disabled
+                className="mt-4 w-full py-3 rounded-xl bg-[#efbf04] text-white font-bold font-[Alexandria] text-sm shadow-sm opacity-60 cursor-not-allowed"
+              >
+                Withdrawals coming soon
               </button>
-            </>
+            </div>
           )}
         </div>
       </div>

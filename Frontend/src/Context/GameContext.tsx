@@ -1,4 +1,4 @@
-import { createContext, useState, useContext, useEffect, type ReactNode } from 'react';
+import { createContext, useState, useContext, useEffect, useCallback, type ReactNode } from 'react';
 import { getBalance } from '../Api/wallet';
 import { getOpenGame, joinGame as joinGameApi, getCurrentGames, GameResponse } from '../Api/game';
 import { AuthContext } from './AuthContext';
@@ -27,7 +27,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [currentGames, setCurrentGames] = useState<GameResponse[]>([]);
   const { user, isInitializing } = useContext(AuthContext);
 
-  const refreshBalance = async () => {
+  const refreshBalance = useCallback(async () => {
     try {
       if (!user) {
         setBalance(null);
@@ -38,7 +38,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       console.error("Failed to fetch balance:", err);
     }
-  };
+  }, [user]);
 
   const refreshLiveGame = async () => {
     try {
@@ -113,7 +113,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     };
 
     load();
-  }, [user, isInitializing]);
+  }, [user, isInitializing, refreshBalance]);
 
   return (
     <GameContext.Provider

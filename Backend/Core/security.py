@@ -24,7 +24,11 @@ def create_access_token(data: dict, expires_minutes: int | None = None) -> str:
     to_encode = data.copy()
     to_encode["type"] = "access"
     to_encode["exp"] = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
-    return jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+    return jwt.encode(
+        to_encode,
+        settings.JWT_SECRET.get_secret_value(),
+        algorithm=settings.JWT_ALGORITHM,
+    )
 
 
 def create_refresh_token(data: dict, ver: int, session_started: datetime) -> str:
@@ -37,7 +41,9 @@ def create_refresh_token(data: dict, ver: int, session_started: datetime) -> str
     )
 
     return jwt.encode(
-        to_encode, settings.JWT_REFRESH_SECRET, algorithm=settings.JWT_ALGORITHM
+        to_encode,
+        settings.JWT_REFRESH_SECRET.get_secret_value(),
+        algorithm=settings.JWT_ALGORITHM,
     )
 
 
@@ -68,11 +74,15 @@ def try_decode_token(
 
 
 def decode_access_token(token: str) -> dict:
-    return decode_token(token, settings.JWT_SECRET, expected_type="access")
+    return decode_token(
+        token, settings.JWT_SECRET.get_secret_value(), expected_type="access"
+    )
 
 
 def decode_refresh_token(token: str) -> dict:
-    return decode_token(token, settings.JWT_REFRESH_SECRET, expected_type="refresh")
+    return decode_token(
+        token, settings.JWT_REFRESH_SECRET.get_secret_value(), expected_type="refresh"
+    )
 
 
 def subject_as_int(payload: dict) -> int:

@@ -1,6 +1,7 @@
 import random
 import secrets
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
 from fastapi import HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -20,6 +21,8 @@ from Backend.Core.security import (
     try_decode_token,
     verify_password,
 )
+from Backend.Wallet.enums import TransactionType
+from Backend.Wallet.models import Transaction
 from Backend.Wallet.services import WalletService
 
 _UNAUTHORIZED = status.HTTP_401_UNAUTHORIZED
@@ -60,7 +63,17 @@ class AuthService:
 
         session.add(user)
         await session.flush()  # Assign user.id before creating wallet
-        await WalletService(session).create_wallet(user.id)
+        wallet = await WalletService(session).create_wallet(user.id)
+        await session.flush()
+
+        wallet.balance = Decimal("1.00")
+        session.add(
+            Transaction(
+                wallet_id=wallet.id,
+                amount=Decimal("1.00"),
+                type=TransactionType.CREDIT,
+            )
+        )
 
         await session.commit()
         await session.refresh(user)
@@ -142,9 +155,13 @@ class AuthService:
         """Best-effort revoke: bump token_version if a cookie identifies a user."""
         payload = None
         if access_token:
-            payload = try_decode_token(access_token, settings.JWT_SECRET)
+            payload = try_decode_token(
+                access_token, settings.JWT_SECRET.get_secret_value()
+            )
         if payload is None and refresh_token:
-            payload = try_decode_token(refresh_token, settings.JWT_REFRESH_SECRET)
+            payload = try_decode_token(
+                refresh_token, settings.JWT_REFRESH_SECRET.get_secret_value()
+            )
         if payload is None:
             return False
 

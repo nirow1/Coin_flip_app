@@ -171,10 +171,13 @@ class GameService:
         player.cashout_decision = decision
         await self.session.flush()
 
-    async def try_start_showdown(self, game_id: int,
-                                 wallet: WalletService,
-                                 leaderboard: LeaderBoardService,
-                                 redis_client: Redis) -> Game | None:
+    async def try_start_showdown(
+        self,
+        game_id: int,
+        wallet: WalletService,
+        leaderboard: LeaderBoardService,
+    ) -> tuple[Game, str | None]:
+        """Return (game, timer_key). Caller must redis.set(timer_key) only after commit."""
         game = await self._get_game_by_id(game_id)
 
         if game.status != "showdown_pending":
@@ -196,6 +199,7 @@ class GameService:
             await self._cashout(player, game, payout, wallet, leaderboard)
 
         # 3. Determine next state
+        timer_key: str | None = None
         if len(continuers) == 0:
             game.status = "finished"
         elif len(continuers) == 1:
@@ -204,15 +208,18 @@ class GameService:
             await self._cashout(winner, game, game.prize_pool, wallet, leaderboard)
         else:
             game.status = "showdown_active"
-            await redis_client.set(f"showdown_flip:{game_id}:{continuers[0].round_number}", "1", ex=60)
+            timer_key = f"showdown_flip:{game_id}:{continuers[0].round_number}"
 
         await self.session.flush()
-        return game
+        return game, timer_key
 
-    async def execute_showdown_flip(self, game_id: int,
-                                    wallet: WalletService,
-                                    leaderboard: LeaderBoardService,
-                                    redis_client: Redis):
+    async def execute_showdown_flip(
+        self,
+        game_id: int,
+        wallet: WalletService,
+        leaderboard: LeaderBoardService,
+    ) -> tuple[Game, str | None]:
+        """Return (game, timer_key). Caller must redis.set(timer_key) only after commit."""
         game = await self._get_game_by_id(game_id)
 
         if game.status != "showdown_active":
@@ -231,8 +238,8 @@ class GameService:
         if all(p.side != winning_side for p in players):
             for player in players:
                 player.side = None
-            await redis_client.set(f"showdown_flip:{game_id}:{players[0].round_number}", "1", ex=60)
-            return await self._set_game_state(game, "showdown_active")
+            timer_key = f"showdown_flip:{game_id}:{players[0].round_number}"
+            return await self._set_game_state(game, "showdown_active"), timer_key
 
         survivors, eliminated = self._apply_eliminations(players, winning_side)
 
@@ -243,11 +250,11 @@ class GameService:
             winner = survivors[0]
             game = await self._set_game_state(game, "finished")
             await self._cashout(winner, game, game.prize_pool, wallet, leaderboard)
-            return game
+            return game, None
 
         game.current_player_count = len(survivors)
-        await redis_client.set(f"showdown_flip:{game_id}:{players[0].round_number}", "1", ex=60)
-        return await self._set_game_state(game, "showdown_active")
+        timer_key = f"showdown_flip:{game_id}:{players[0].round_number}"
+        return await self._set_game_state(game, "showdown_active"), timer_key
 
     # ─── Open-game lifecycle (engine recovery) ────────────────────
     async def create_game(self, flip_time: datetime) -> Game:
@@ -284,7 +291,8 @@ class GameService:
             flip_time = self._as_utc(game.flip_time)
             if flip_time < now - timedelta(minutes=1):
                 try:
-                    await self.cancel_game(game.id, wallet)
+                    async with self.session.begin_nested():
+                        await self.cancel_game(game.id, wallet)
                 except Exception as e:
                     # Leave status open so a later tick can retry; do not mark canceled.
                     print(f"Error canceling stale open game {game.id}: {e}")
@@ -351,6 +359,13 @@ class GameService:
         """Returns games in active showdown phase (ready for execute_showdown_flip)."""
         result = await self.session.execute(select(Game).where(Game.status == "showdown_active").order_by(Game.id.desc()))
         return list(result.scalars().all())
+
+    async def showdown_timer_key(self, game_id: int) -> str | None:
+        """Redis TTL key for an active showdown round, or None if no survivors."""
+        players = await self._get_players_for_game(game_id)
+        if not players:
+            return None
+        return f"showdown_flip:{game_id}:{players[0].round_number}"
 
     async def get_game_status(self, game_id: int) -> str:
         game = await self._get_game_by_id(game_id, lock=False)

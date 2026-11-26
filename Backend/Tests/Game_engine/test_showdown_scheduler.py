@@ -18,6 +18,7 @@ async def test_showdown_scheduler_processes_expired_key():
     mock_service = AsyncMock()
     mock_wallet = AsyncMock()
     mock_leaderboard = AsyncMock()
+    mock_service.execute_showdown_flip.return_value = (MagicMock(), "showdown_flip:5:3")
 
     messages = [
         {"type": "pmessage", "data": "showdown_flip:5:2"},
@@ -30,8 +31,10 @@ async def test_showdown_scheduler_processes_expired_key():
         await engine.showdown_scheduler()
 
     mock_service.execute_showdown_flip.assert_awaited_once_with(
-        5, mock_wallet, mock_leaderboard, engine.redis_client
+        5, mock_wallet, mock_leaderboard
     )
+    mock_session.commit.assert_awaited_once()
+    engine.redis_client.set.assert_awaited_once_with("showdown_flip:5:3", "1", ex=60)
 
 
 async def test_showdown_scheduler_ignore_malformed_key():
@@ -77,7 +80,10 @@ async def test_showdown_scheduler_error_does_not_crash():
     mock_service = AsyncMock()
     mock_wallet = AsyncMock()
     mock_leaderboard = AsyncMock()
-    mock_service.execute_showdown_flip.side_effect = Exception("DB error")
+    mock_service.execute_showdown_flip.side_effect = [
+        Exception("DB error"),
+        (MagicMock(), None),
+    ]
 
     messages = [
         {"type": "pmessage", "data": "showdown_flip:5:2"},  # raises exception
