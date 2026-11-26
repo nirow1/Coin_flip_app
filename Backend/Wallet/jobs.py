@@ -27,7 +27,7 @@ from Backend.Wallet.enums import (
 )
 from Backend.Wallet.models import ChainCursor, CreditOrder, Withdrawal
 from Backend.Wallet.rails import get_adapter
-from Backend.Wallet.services import WalletService
+from Backend.Wallet.services import DepositTransactionNotFetched, WalletService
 
 logger = logging.getLogger(__name__)
 
@@ -452,13 +452,25 @@ async def run_cold_deposit_poller(session_factory: async_sessionmaker) -> None:
                 for item in sigs:
                     async with session_factory() as session:
                         if item.err is not None:
+                            # Listing already shows failure. Do not fetch or insert.
                             logger.info(
                                 "skipping failed cold-address signature %s",
                                 item.signature,
                             )
                         else:
                             service = WalletService(session)
-                            await service.process_deposit_signature(item.signature)
+                            try:
+                                await service.process_deposit_signature(item.signature)
+                            except DepositTransactionNotFetched:
+                                # Leave the cursor on the previous signature, sleep,
+                                # and retry this one next tick. Do not watermark it.
+                                logger.info(
+                                    "transaction %s not fetched yet; leaving cursor",
+                                    item.signature,
+                                )
+                                break
+                        # process returns without error for failed/non-credit txs
+                        # it did fetch, so those signatures still move the cursor.
                         cursor = await _get_or_create_solana_cursor(session)
                         cursor.last_signature = item.signature
                         cursor.updated_at = datetime.now(UTC)

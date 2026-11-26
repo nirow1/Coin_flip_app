@@ -1,11 +1,12 @@
 import asyncio
 import pytest
 from decimal import Decimal
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from fastapi import HTTPException
 from Backend.Wallet.services import WalletService
-from Backend.Wallet.models import Transaction
+from Backend.Wallet.models import Transaction, Wallet
 from Backend.Wallet.enums import TransactionType
 from Backend.Core.exceptions import InsufficientFundsError
 
@@ -159,6 +160,26 @@ async def test_concurrent_credits(engine, committed_user_and_wallet):
 
             credit_txs = [t for t in txs if t.type == TransactionType.CREDIT]
             assert len(credit_txs) >= 2
+
+
+async def test_db_rejects_negative_wallet_balance(session, test_wallet):
+    names = {c.name for c in Wallet.__table__.constraints}
+    assert "ck_wallets_balance_non_negative" in names
+
+    await session.execute(
+        text(
+            "ALTER TABLE wallets DROP CONSTRAINT IF EXISTS ck_wallets_balance_non_negative"
+        )
+    )
+    await session.execute(
+        text(
+            "ALTER TABLE wallets ADD CONSTRAINT ck_wallets_balance_non_negative "
+            "CHECK (balance >= 0)"
+        )
+    )
+    test_wallet.balance = Decimal("-1.00")
+    with pytest.raises(IntegrityError):
+        await session.flush()
 
 async def run_in_transaction(engine, coro):
     async with engine.connect() as conn:

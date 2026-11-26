@@ -11,6 +11,8 @@ import { GameContext } from '../../Context/GameContext';
 
 type Step = 'credits' | 'quote' | 'pay' | 'paid';
 
+const STOP_POLL_STATUSES = new Set(['paid', 'expired', 'needs_review', 'refunded']);
+
 function secondsUntil(iso: string): number {
   return Math.max(0, Math.floor((new Date(iso).getTime() - Date.now()) / 1000));
 }
@@ -57,24 +59,34 @@ export default function DepositPage() {
   useEffect(() => {
     if (step !== 'pay' || !order) return;
     let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+    const stop = () => {
+      if (intervalId !== undefined) {
+        clearInterval(intervalId);
+        intervalId = undefined;
+      }
+    };
     const poll = async () => {
       try {
         const res = await getOrder(order.order_id);
         if (cancelled) return;
-        setStatus(res.data.status);
-        if (res.data.status === 'paid') {
+        const next = res.data.status;
+        setStatus(next);
+        if (!STOP_POLL_STATUSES.has(next)) return;
+        stop();
+        if (next === 'paid') {
           await refreshBalance();
-          setStep('paid');
+          if (!cancelled) setStep('paid');
         }
       } catch (err) {
         if (!cancelled) setError(errorMessage(err));
       }
     };
     void poll();
-    const id = setInterval(() => void poll(), 5000);
+    intervalId = setInterval(() => void poll(), 5000);
     return () => {
       cancelled = true;
-      clearInterval(id);
+      stop();
     };
   }, [step, order, refreshBalance]);
 
@@ -281,19 +293,32 @@ export default function DepositPage() {
                     <p className="text-xs text-gray-400 uppercase tracking-widest font-[Alexandria] mb-3">
                       Pay with Solana
                     </p>
-                    <div className="flex flex-col items-center gap-4">
-                      <div className="bg-white p-3 rounded-xl border border-gray-100">
-                        <QRCodeSVG value={order.solana_pay_url} size={200} />
+                    {secondsLeft > 0 &&
+                    status !== 'expired' &&
+                    status !== 'needs_review' &&
+                    status !== 'refunded' ? (
+                      <div className="flex flex-col items-center gap-4">
+                        <div className="bg-white p-3 rounded-xl border border-gray-100">
+                          <QRCodeSVG value={order.solana_pay_url} size={200} />
+                        </div>
+                        <a
+                          href={order.solana_pay_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm font-bold font-[Alexandria] text-[#efbf04] hover:text-[#d4a800] underline underline-offset-2"
+                        >
+                          Open in wallet
+                        </a>
                       </div>
-                      <a
-                        href={order.solana_pay_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm font-bold font-[Alexandria] text-[#efbf04] hover:text-[#d4a800] underline underline-offset-2"
-                      >
-                        Open in wallet
-                      </a>
-                    </div>
+                    ) : (
+                      <p className="text-sm text-gray-600 font-[Alexandria] text-center">
+                        {status === 'needs_review'
+                          ? 'This payment is in review.'
+                          : status === 'refunded'
+                            ? 'This deposit was refunded.'
+                            : 'This payment window has expired.'}
+                      </p>
+                    )}
                   </div>
                   <div className="bg-[#fff7d6] rounded-xl p-4 flex flex-col gap-1 text-xs font-[Alexandria]">
                     <div className="flex justify-between text-gray-600">
@@ -314,7 +339,15 @@ export default function DepositPage() {
                     </div>
                   </div>
                   <p className="text-[10px] text-gray-400 font-[Alexandria]">
-                    Waiting for payment on Solana. This page checks every few seconds.
+                    {status === 'needs_review'
+                      ? 'Payment needs a manual review. Checking has stopped.'
+                      : status === 'expired'
+                        ? 'This order expired. Checking has stopped.'
+                        : status === 'refunded'
+                          ? 'This deposit was refunded. Checking has stopped.'
+                          : secondsLeft === 0
+                            ? 'Payment window closed. Still checking the order status.'
+                            : 'Waiting for payment on Solana. This page checks every few seconds.'}
                   </p>
                   <button
                     onClick={onStartOver}

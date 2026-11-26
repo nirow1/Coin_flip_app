@@ -31,7 +31,11 @@ from Backend.Wallet.models import (
     UnmatchedDeposit,
     Wallet,
 )
-from Backend.Wallet.services import OVERPAY_MAX_RATIO, WalletService
+from Backend.Wallet.services import (
+    OVERPAY_MAX_RATIO,
+    DepositTransactionNotFetched,
+    WalletService,
+)
 from datetime import date
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -114,6 +118,8 @@ async def _process_matched(
 ) -> None:
     fake_tx = MagicMock()
     fake_tx.block_time = block_time
+    # MagicMock would otherwise invent a truthy meta.err and look like a failed tx.
+    fake_tx.transaction.meta.err = None
     keys = [order.reference_pubkey, order.receive_address]
     memos = [order.order_ref]
 
@@ -246,6 +252,7 @@ async def test_unknown_deposit_becomes_unmatched_row(session, test_user, test_wa
     cold = settings.SOLANA_COLD_RECEIVE_ADDRESS
     fake_tx = MagicMock()
     fake_tx.block_time = int(datetime.now(UTC).timestamp())
+    fake_tx.transaction.meta.err = None
 
     with (
         patch.object(service, "_fetch_finalized_tx", new_callable=AsyncMock, return_value=fake_tx),
@@ -646,3 +653,81 @@ async def test_second_signature_on_needs_review_preserves_paid_fields(
     wallet = await session.scalar(select(Wallet).where(Wallet.user_id == test_user.id))
     assert wallet is not None
     assert wallet.balance == Decimal("0.00")
+
+
+async def test_missing_transaction_raises_not_fetched(session, test_user, test_wallet):
+    service = WalletService(session)
+    with patch.object(
+        service, "_fetch_finalized_tx", new_callable=AsyncMock, return_value=None
+    ):
+        with pytest.raises(DepositTransactionNotFetched, match="not fetched"):
+            await service.process_deposit_signature(f"sig-missing-{uuid4().hex}")
+
+
+@pytest.mark.parametrize(
+    "err,pre,post",
+    [
+        ({"InstructionError": [0, "Custom"]}, [0, 0], [0, 50_000_000]),
+        (None, [50_000_000, 50_000_000], [50_000_000, 50_000_000]),
+        (None, [10_000_000, 40_000_000], [50_000_000, 0]),
+    ],
+)
+async def test_failed_or_non_credit_does_not_create_unmatched(
+    session, test_user, test_wallet, err, pre, post
+):
+    """Failed txs and cold outflows must not insert an unmatched row or raise."""
+    from Backend.config import settings
+
+    service = WalletService(session)
+    sig = f"sig-junk-{uuid4().hex}"
+    cold = settings.SOLANA_COLD_RECEIVE_ADDRESS
+    sender = str(Keypair().pubkey())
+    tx = _fetched_tx([sender, cold], pre, post, "no-order", err=err)
+
+    with patch.object(
+        service, "_fetch_finalized_tx", new_callable=AsyncMock, return_value=tx
+    ):
+        await service.process_deposit_signature(sig)
+    await session.flush()
+
+    row = await session.scalar(
+        select(UnmatchedDeposit).where(UnmatchedDeposit.tx_hash == sig)
+    )
+    assert row is None
+
+
+async def test_overpay_band_is_two_percent(session, test_user, test_wallet):
+    """1.02x is paid. The old 1.05x band is now overpaid and needs review."""
+    assert OVERPAY_MAX_RATIO == Decimal("1.02")
+    quoted = 100_000_000
+    within = int(Decimal(quoted) * Decimal("1.02"))
+    five_percent = int(Decimal(quoted) * Decimal("1.05"))
+    assert five_percent > int(Decimal(quoted) * OVERPAY_MAX_RATIO)
+
+    service = WalletService(session)
+    now_ts = int(datetime.now(UTC).timestamp())
+
+    paid = await _seed_pending_order(
+        session, user_id=test_user.id, lamports=quoted, credits=Decimal("10")
+    )
+    await _process_matched(
+        service, paid, sig=f"sig-band-ok-{uuid4().hex}", received=within, block_time=now_ts
+    )
+    await session.flush()
+    await session.refresh(paid)
+    assert paid.status == CreditOrderStatus.PAID
+
+    review = await _seed_pending_order(
+        session, user_id=test_user.id, lamports=quoted, credits=Decimal("10")
+    )
+    await _process_matched(
+        service,
+        review,
+        sig=f"sig-band-over-{uuid4().hex}",
+        received=five_percent,
+        block_time=now_ts,
+    )
+    await session.flush()
+    await session.refresh(review)
+    assert review.status == CreditOrderStatus.NEEDS_REVIEW
+    assert review.review_reason == "overpaid"

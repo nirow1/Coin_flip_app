@@ -1,4 +1,6 @@
+import json
 from decimal import Decimal
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import ValidationError
 from redis.asyncio import Redis
@@ -13,6 +15,7 @@ from Backend.Wallet.enums import Chain
 from Backend.Wallet.schemas import (
     QUOTE_RATE_LIMIT,
     QUOTE_RATE_WINDOW_SEC,
+    WEBHOOK_MAX_BODY_BYTES,
     BalanceResponse,
     CreateOrderRequest,
     CreateOrderResponse,
@@ -54,14 +57,43 @@ async def require_withdrawals_enabled() -> None:
 
 
 async def _enforce_quote_rate_limit(redis: Redis, user_id: int) -> None:
+    """Count a quote hit and set the window TTL in one Redis transaction.
+
+    Separate INCR then EXPIRE can crash in between and leave a key with no TTL,
+    which locks that user out forever. EXPIRE NX sets the TTL only when the key
+    has none, so later hits do not slide the window.
+    """
     key = f"rate:wallet:quote:{user_id}"
-    count = await redis.incr(key)
-    if count == 1:
-        await redis.expire(key, QUOTE_RATE_WINDOW_SEC)
-    if count > QUOTE_RATE_LIMIT:
+    pipe = redis.pipeline(transaction=True)
+    pipe.incr(key)
+    pipe.expire(key, QUOTE_RATE_WINDOW_SEC, nx=True)
+    count, _ttl_set = await pipe.execute()
+    if int(count) > QUOTE_RATE_LIMIT:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many quote requests; try again later",
+        )
+
+
+def _require_webhook_content_length(request: Request) -> None:
+    """413 before the body is read. Missing length is rejected, not treated as 0."""
+    raw_length = request.headers.get("content-length")
+    if raw_length is None or raw_length == "":
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="Content-Length required",
+        )
+    try:
+        length = int(raw_length)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="Content-Length required",
+        ) from None
+    if length > WEBHOOK_MAX_BODY_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail="Webhook body too large",
         )
 
 
@@ -92,6 +124,7 @@ async def solana_webhook(
     _: None = Depends(require_solana_payments),
 ):
     """HMAC-first webhook. Custom {signature} body — not Helius format."""
+    _require_webhook_content_length(request)
     raw_body = await request.body()
     signature_header = request.headers.get("x-webhook-signature", "")
     timestamp_header = request.headers.get("x-webhook-timestamp", "")
@@ -106,9 +139,10 @@ async def solana_webhook(
     try:
         payload = SolanaWebhookPayload.model_validate_json(raw_body)
     except ValidationError as exc:
+        # errors() keeps the raw ValueError in ctx, which the JSON response cannot encode.
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=exc.errors(),
+            detail=json.loads(exc.json()),
         ) from exc
 
     await wallet_service.process_solana_webhook(tx_signature=payload.signature)

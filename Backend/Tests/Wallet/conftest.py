@@ -208,22 +208,26 @@ async def solana_client(engine, test_app):
         await setup_conn.begin()
         sf = async_sessionmaker(bind=setup_conn, expire_on_commit=False)
         async with sf() as s:
-            user = User(
-                email="solana_deposit@example.com",
-                password_hash=hash_password("Secret123!"),
-                country="CZ",
-                dob=date(2000, 1, 1),
+            user = await s.scalar(
+                select(User).where(User.email == "solana_deposit@example.com")
             )
-            s.add(user)
-            await s.flush()
-
-            wallet = Wallet(user_id=user.id, balance=Decimal("0.00"))
-            s.add(wallet)
-            await s.flush()
+            if user is None:
+                user = User(
+                    email="solana_deposit@example.com",
+                    password_hash=hash_password("Secret123!"),
+                    country="CZ",
+                    dob=date(2000, 1, 1),
+                )
+                s.add(user)
+                await s.flush()
+                s.add(Wallet(user_id=user.id, balance=Decimal("0.00")))
+                await s.flush()
+            elif await s.scalar(select(Wallet).where(Wallet.user_id == user.id)) is None:
+                s.add(Wallet(user_id=user.id, balance=Decimal("0.00")))
+                await s.flush()
 
             await s.commit()
             await s.refresh(user)
-            await s.refresh(wallet)
 
         await setup_conn.commit()
 

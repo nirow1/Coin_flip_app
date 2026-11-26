@@ -105,6 +105,49 @@ async def test_pending_order_cap_holds(session, test_user, test_wallet):
     assert n == MAX_PENDING_CREDIT_ORDERS
 
 
+async def test_pending_cap_ignores_expired_but_still_pending(session, test_user, test_wallet):
+    """Rows still PENDING after expires_at do not burn the pending slots."""
+    service = WalletService(session)
+    for i in range(MAX_PENDING_CREDIT_ORDERS):
+        quote = await _make_buy_quote(session, user_id=test_user.id, credits=10 + i)
+        order = await service.create_credit_order(user_id=test_user.id, quote_id=quote.id)
+        order.expires_at = datetime.now(UTC) - timedelta(seconds=30)
+        order.status = CreditOrderStatus.PENDING
+    await session.flush()
+
+    fresh = await _make_buy_quote(session, user_id=test_user.id, credits=42)
+    created = await service.create_credit_order(user_id=test_user.id, quote_id=fresh.id)
+    assert created.status == CreditOrderStatus.PENDING
+    assert created.expires_at > datetime.now(UTC)
+
+
+async def test_create_credit_order_locks_wallet_before_pending_count(
+    session, test_user, test_wallet
+):
+    service = WalletService(session)
+    quote = await _make_buy_quote(session, user_id=test_user.id)
+    events: list[str] = []
+    original_lock = service.get_wallet_for_update
+    original_scalar = session.scalar
+
+    async def lock(user_id: int):
+        events.append("lock")
+        return await original_lock(user_id)
+
+    async def scalar(stmt, *args, **kwargs):
+        sql = str(stmt).lower()
+        if "count(" in sql and "credit_order" in sql:
+            events.append("count")
+        return await original_scalar(stmt, *args, **kwargs)
+
+    service.get_wallet_for_update = lock  # type: ignore[method-assign]
+    session.scalar = scalar  # type: ignore[method-assign]
+
+    await service.create_credit_order(user_id=test_user.id, quote_id=quote.id)
+    assert "lock" in events and "count" in events
+    assert events.index("lock") < events.index("count")
+
+
 async def test_order_status_route_only_answers_owner(engine, test_app):
     """GET /wallet/credits/orders/{id} returns 404 for a non-owner."""
     async with engine.connect() as setup:

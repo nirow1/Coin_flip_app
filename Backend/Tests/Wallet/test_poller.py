@@ -557,3 +557,52 @@ async def test_poller_creates_cursor_then_processes_first_deposit(engine):
 
     assert seen == [deposit]
     assert await _read_cursor(engine) == deposit
+
+
+async def test_poller_leaves_cursor_when_transaction_not_fetched(engine):
+    """getTransaction returning None must not watermark that signature."""
+    prior_obj = _make_sig(55)
+    missing_obj = _make_sig(56)
+    prior = str(prior_obj)
+    missing = str(missing_obj)
+    await _set_cursor(engine, prior)
+    started = asyncio.Event()
+
+    async def fake_fetch(self, tx_signature: str):
+        started.set()
+        assert tx_signature == missing
+        return None
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.get_signatures_for_address = AsyncMock(
+        return_value=SimpleNamespace(value=[_sig_info(missing_obj)])
+    )
+
+    def restore_from_string(value: str) -> Signature:
+        if value == prior:
+            return prior_obj
+        if value == missing:
+            return missing_obj
+        return prior_obj
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    with (
+        patch("Backend.Wallet.jobs.AsyncClient", return_value=mock_client),
+        patch("Backend.Wallet.services.WalletService._fetch_finalized_tx", fake_fetch),
+        patch("Backend.Wallet.jobs.POLL_INTERVAL_S", 60),
+        patch("Backend.Wallet.jobs.settings") as mock_settings,
+        patch("Backend.Wallet.jobs.Signature.from_string", side_effect=restore_from_string),
+    ):
+        mock_settings.SOLANA_RPC_URL = "http://localhost"
+        mock_settings.SOLANA_COLD_RECEIVE_ADDRESS = str(Keypair().pubkey())
+        task = asyncio.create_task(run_cold_deposit_poller(session_factory))
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            await asyncio.sleep(0.2)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    assert await _read_cursor(engine) == prior

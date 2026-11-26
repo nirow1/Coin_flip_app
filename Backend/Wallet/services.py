@@ -54,7 +54,23 @@ logger = logging.getLogger(__name__)
 
 LAMPORTS_PER_SOL = Decimal(1000000000)
 _RPC_TIMEOUT_SEC = 10
-OVERPAY_MAX_RATIO = Decimal("1.05")
+# Accept at most ~2% above the quoted lamports. Anything higher needs review.
+OVERPAY_MAX_RATIO = Decimal("1.02")
+
+
+class DepositTransactionNotFetched(Exception):
+    """getTransaction returned nothing. Retryable; the poller must not advance."""
+
+    def __init__(self, signature: str) -> None:
+        self.signature = signature
+        super().__init__(f"transaction not fetched: {signature}")
+
+
+def _unmatched_is_junk(tx, lamports: int) -> bool:
+    """Failed transactions and cold outflows are not deposits."""
+    meta = getattr(getattr(tx, "transaction", None), "meta", None)
+    err = getattr(meta, "err", None) if meta is not None else None
+    return err is not None or lamports <= 0
 
 
 class WalletService:
@@ -171,8 +187,18 @@ class WalletService:
             )
 
     async def process_solana_webhook(self, tx_signature: str) -> None:
-        """Signature-only webhook: always ack; matching/credit happen here."""
-        await self.process_deposit_signature(tx_signature)
+        """Signature-only webhook: always ack; matching/credit happen here.
+
+        A signature RPC has not indexed yet is left for the cold-address poller.
+        That path raises so the cursor stays put and the next tick retries.
+        """
+        try:
+            await self.process_deposit_signature(tx_signature)
+        except DepositTransactionNotFetched:
+            logger.info(
+                "webhook signature %s not fetched yet; acknowledging for poller retry",
+                tx_signature,
+            )
 
     async def create_buy_quote(self, user_id: int, credits: int, chain: Chain, redis: Redis) -> PaymentQuote:
         priced = await quote_buy_lamports(credits, redis)
@@ -210,26 +236,33 @@ class WalletService:
                 detail="Invalid password",
             )
 
-        existing = await self.session.scalar(
-            select(Withdrawal).where(
-                Withdrawal.user_id == user_id,
-                Withdrawal.idempotency_key == idempotency_key,
-            )
-        )
+        existing = await self._withdrawal_by_idempotency(user_id, idempotency_key)
         if existing is not None:
             return existing
 
-        consumed = await self.consume_quote(
-            quote_id=quote_id,
-            user_id=user_id,
-            kind=QuoteKind.WITHDRAW,
-        )
+        try:
+            consumed = await self.consume_quote(
+                quote_id=quote_id,
+                user_id=user_id,
+                kind=QuoteKind.WITHDRAW,
+            )
+        except HTTPException as exc:
+            # The other request consumed the quote and inserted the row first.
+            if exc.status_code == status.HTTP_400_BAD_REQUEST:
+                raced = await self._withdrawal_by_idempotency(user_id, idempotency_key)
+                if raced is not None:
+                    return raced
+            raise
         payload = consumed["payload"]
         credits = Decimal(str(payload["credits"]))
         net_atomic = int(payload["net_atomic"])
         asset = WithdrawAsset(payload["asset"])
         chain = Chain(payload["chain"])
         destination = str(payload["destination"])
+
+        # Hold this user's wallet row so two requests cannot both pass the caps.
+        # debit() locks the same row again below; that second lock stays as-is.
+        await self.get_wallet_for_update(user_id)
 
         since = datetime.now(UTC) - timedelta(hours=24)
         user_total = await self._withdrawn_credits_since(since=since, user_id=user_id)
@@ -274,18 +307,23 @@ class WalletService:
             await self.session.flush()
         except IntegrityError:
             await self.session.rollback()
-            raced = await self.session.scalar(
-                select(Withdrawal).where(
-                    Withdrawal.user_id == user_id,
-                    Withdrawal.idempotency_key == idempotency_key,
-                )
-            )
+            raced = await self._withdrawal_by_idempotency(user_id, idempotency_key)
             if raced is not None:
                 return raced
             raise
         
         await self.session.refresh(withdrawal)
         return withdrawal
+
+    async def _withdrawal_by_idempotency(
+        self, user_id: int, idempotency_key: str
+    ) -> Withdrawal | None:
+        return await self.session.scalar(
+            select(Withdrawal).where(
+                Withdrawal.user_id == user_id,
+                Withdrawal.idempotency_key == idempotency_key,
+            )
+        )
 
     async def _withdrawn_credits_since(
         self,
@@ -465,12 +503,17 @@ class WalletService:
         payload = consumed["payload"]
         expires_at = consumed["expires_at"]
 
+        # Same lock as withdrawals: concurrent creates for one user run one at a time.
+        await self.get_wallet_for_update(user_id)
+
+        now = datetime.now(UTC)
         pending = await self.session.scalar(
             select(func.count())
             .select_from(CreditOrder)
             .where(
                 CreditOrder.user_id == user_id,
                 CreditOrder.status == CreditOrderStatus.PENDING,
+                CreditOrder.expires_at > now,
             )
         )
         if (pending or 0) >= MAX_PENDING_CREDIT_ORDERS:
@@ -637,13 +680,21 @@ class WalletService:
     async def process_deposit_signature(self, tx_signature: str) -> None:
         tx = await self._fetch_finalized_tx(tx_signature)
         if tx is None:
-            return
+            # Poller leaves the cursor on this signature and retries next tick.
+            raise DepositTransactionNotFetched(tx_signature)
 
         account_keys, memos = self._tx_account_keys_and_memos(tx)
         lamports = self._cold_lamports_delta(tx, account_keys)
         order = await self._find_order_for_tx(account_keys)
 
         if order is None:
+            if _unmatched_is_junk(tx, lamports):
+                # Clean return: poller still advances. Webhook acks with no row.
+                logger.info(
+                    "ignoring non-credit signature %s (err or non-positive cold delta)",
+                    tx_signature,
+                )
+                return
             block_time_raw = getattr(tx, "block_time", None) or getattr(tx, "blockTime", None)
             block_time = (
                 datetime.fromtimestamp(int(block_time_raw), UTC)
@@ -681,6 +732,8 @@ class WalletService:
         # A different payment after the order left PENDING must not overwrite
         # paid_tx_hash / amounts. Keep an audit row instead.
         if order.status != CreditOrderStatus.PENDING:
+            if _unmatched_is_junk(tx, lamports):
+                return
             await self._record_extra_payment(
                 order,
                 tx_signature,

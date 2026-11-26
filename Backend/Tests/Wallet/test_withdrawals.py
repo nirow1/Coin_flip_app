@@ -16,7 +16,9 @@ from fastapi import HTTPException
 from solders.keypair import Keypair
 from solders.transaction_status import TransactionConfirmationStatus
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
+from Backend.Core.security import hash_password
 from Backend.Core.core_solana import (
     SendFailedOnChain,
     SendFailedRefundable,
@@ -426,3 +428,122 @@ async def test_create_withdrawal_idempotency_replay_safe(
         )
     )
     assert tx_count == 1
+
+
+async def test_create_withdrawal_locks_wallet_before_daily_caps(
+    session, test_user, test_wallet
+):
+    await _fund(session, test_user.id, Decimal("100.00"))
+    quote = await _make_withdraw_quote(session, user_id=test_user.id, credits=Decimal("20.00"))
+    service = WalletService(session)
+    events: list[str] = []
+    original_lock = service.get_wallet_for_update
+    original_scalar = session.scalar
+
+    async def lock(user_id: int):
+        events.append("lock")
+        return await original_lock(user_id)
+
+    async def scalar(stmt, *args, **kwargs):
+        sql = str(stmt).lower()
+        if "sum(" in sql and "withdrawals" in sql:
+            events.append("cap")
+        return await original_scalar(stmt, *args, **kwargs)
+
+    service.get_wallet_for_update = lock  # type: ignore[method-assign]
+    session.scalar = scalar  # type: ignore[method-assign]
+
+    await service.create_withdrawal(
+        user_id=test_user.id,
+        quote_id=quote.id,
+        idempotency_key="idem-lock-16charsx",
+        password=PASSWORD,
+        password_hash=test_user.password_hash,
+    )
+    assert "lock" in events and "cap" in events
+    assert events.index("lock") < events.index("cap")
+
+
+async def test_create_withdrawal_quote_race_returns_existing_row(
+    session, test_user, test_wallet
+):
+    """Loser of quote consume must get the winner's row, not 400."""
+    await _fund(session, test_user.id, Decimal("100.00"))
+    quote = await _make_withdraw_quote(session, user_id=test_user.id, credits=Decimal("20.00"))
+    service = WalletService(session)
+    key = "idem-race-16charsxx"
+    winner = await service.create_withdrawal(
+        user_id=test_user.id,
+        quote_id=quote.id,
+        idempotency_key=key,
+        password=PASSWORD,
+        password_hash=test_user.password_hash,
+    )
+
+    real_scalar = session.scalar
+    seen = {"n": 0}
+
+    async def hide_first_idempotency_read(stmt, *args, **kwargs):
+        seen["n"] += 1
+        if seen["n"] == 1:
+            return None
+        return await real_scalar(stmt, *args, **kwargs)
+
+    session.scalar = hide_first_idempotency_read  # type: ignore[method-assign]
+    again = await service.create_withdrawal(
+        user_id=test_user.id,
+        quote_id=quote.id,
+        idempotency_key=key,
+        password=PASSWORD,
+        password_hash=test_user.password_hash,
+    )
+
+    assert again.id == winner.id
+    wallet = await session.scalar(select(Wallet).where(Wallet.user_id == test_user.id))
+    assert wallet is not None
+    assert wallet.balance == Decimal("80.00")
+
+
+async def test_create_withdrawal_integrity_error_returns_raced_row():
+    """Insert race: flush hits the unique key, then we return the existing row."""
+    existing = SimpleNamespace(id=7, status=WithdrawalStatus.QUEUED)
+    session = AsyncMock()
+    session.add = MagicMock()
+    reads = [None, existing]
+
+    async def scalar(_stmt):
+        return reads.pop(0)
+
+    session.scalar = scalar
+    session.flush = AsyncMock(side_effect=IntegrityError("INSERT", {}, Exception("dup")))
+    session.rollback = AsyncMock()
+
+    service = WalletService(session)
+
+    async def fake_consume(**_kwargs):
+        return {
+            "payload": {
+                "credits": "20.00",
+                "net_atomic": 19_500_000,
+                "asset": WithdrawAsset.USDC.value,
+                "chain": Chain.SOLANA.value,
+                "destination": DEST,
+            },
+            "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+        }
+
+    service.consume_quote = fake_consume  # type: ignore[method-assign]
+    service.get_wallet_for_update = AsyncMock(return_value=SimpleNamespace())  # type: ignore[method-assign]
+    service._withdrawn_credits_since = AsyncMock(return_value=Decimal("0"))  # type: ignore[method-assign]
+    service.debit = AsyncMock()  # type: ignore[method-assign]
+
+    result = await service.create_withdrawal(
+        user_id=1,
+        quote_id=str(uuid4()),
+        idempotency_key="idem-integ-16chars",
+        password=PASSWORD,
+        password_hash=hash_password(PASSWORD),
+    )
+    assert result is existing
+    session.rollback.assert_awaited()
+    assert reads == []
