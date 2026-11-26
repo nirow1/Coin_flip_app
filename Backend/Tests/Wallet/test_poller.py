@@ -13,7 +13,7 @@ import pytest
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from solders.signature import Signature
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from Backend.Auth.models import User
@@ -184,7 +184,7 @@ async def test_collect_signatures_preserves_err():
     assert result[1].err is None
 
 
-async def _set_cursor(engine, last_signature: str) -> None:
+async def _set_cursor(engine, last_signature: str | None) -> None:
     async with engine.connect() as setup:
         await setup.begin()
         sf = async_sessionmaker(bind=setup, expire_on_commit=False)
@@ -204,6 +204,16 @@ async def _set_cursor(engine, last_signature: str) -> None:
             else:
                 existing.last_signature = last_signature
                 existing.updated_at = datetime.now(UTC)
+            await s.commit()
+        await setup.commit()
+
+
+async def _delete_solana_cursor(engine) -> None:
+    async with engine.connect() as setup:
+        await setup.begin()
+        sf = async_sessionmaker(bind=setup, expire_on_commit=False)
+        async with sf() as s:
+            await s.execute(delete(ChainCursor).where(ChainCursor.chain == Chain.SOLANA))
             await s.commit()
         await setup.commit()
 
@@ -478,3 +488,72 @@ async def test_poller_advances_past_verify_failure_and_processes_later_sig(engin
             )
             assert cursor is not None
             assert cursor.last_signature == good_sig
+
+
+def _rpc_client(sig_infos: list) -> AsyncMock:
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.get_signatures_for_address = AsyncMock(
+        return_value=SimpleNamespace(value=sig_infos)
+    )
+    return mock_client
+
+
+async def _run_poller_until(engine, mock_client, record, expected_sig: str) -> None:
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    with (
+        patch("Backend.Wallet.jobs.AsyncClient", return_value=mock_client),
+        patch("Backend.Wallet.jobs.WalletService.process_deposit_signature", record),
+        patch("Backend.Wallet.jobs.POLL_INTERVAL_S", 60),
+        patch("Backend.Wallet.jobs.settings") as mock_settings,
+    ):
+        mock_settings.SOLANA_RPC_URL = "http://localhost"
+        mock_settings.SOLANA_COLD_RECEIVE_ADDRESS = str(Keypair().pubkey())
+        task = asyncio.create_task(run_cold_deposit_poller(session_factory))
+        try:
+            await _wait_cursor(engine, expected_sig)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_poller_processes_when_bootstrapped_cursor_has_no_signature(engine):
+    """Existing row + last_signature None still credits the next cold sig."""
+    deposit_obj = _make_sig(11)
+    deposit = str(deposit_obj)
+    await _set_cursor(engine, None)
+    seen: list[str] = []
+
+    async def record(self, sig: str) -> None:
+        seen.append(sig)
+
+    await _run_poller_until(engine, _rpc_client([_sig_info(deposit_obj)]), record, deposit)
+
+    assert seen == [deposit]
+    assert await _read_cursor(engine) == deposit
+
+
+async def test_poller_creates_cursor_then_processes_first_deposit(engine):
+    """No chain_cursors row: persist it, then credit the first deposit."""
+    deposit_obj = _make_sig(21)
+    deposit = str(deposit_obj)
+    await _delete_solana_cursor(engine)
+    assert await _read_cursor(engine) is None
+    seen: list[str] = []
+
+    async def record(self, sig: str) -> None:
+        async with engine.connect() as conn:
+            sf = async_sessionmaker(bind=conn, expire_on_commit=False)
+            async with sf() as s:
+                cursor = await s.scalar(
+                    select(ChainCursor).where(ChainCursor.chain == Chain.SOLANA)
+                )
+                assert cursor is not None
+                assert cursor.last_signature is None
+        seen.append(sig)
+
+    await _run_poller_until(engine, _rpc_client([_sig_info(deposit_obj)]), record, deposit)
+
+    assert seen == [deposit]
+    assert await _read_cursor(engine) == deposit

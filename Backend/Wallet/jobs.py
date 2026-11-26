@@ -413,34 +413,24 @@ async def run_cold_deposit_poller(session_factory: async_sessionmaker) -> None:
                     until,
                 )
 
-                # First-ever watermark: skip replaying the entire cold history.
-                if until is None and sigs:
-                    newest = sigs[-1].signature
+                # Row already committed above. last_signature None means
+                # bootstrapped with nothing processed yet — credit every sig.
+                # Do not watermark the page and skip it; that drops the first
+                # deposits on a fresh cold address.
+                for item in sigs:
                     async with session_factory() as session:
+                        if item.err is not None:
+                            logger.info(
+                                "skipping failed cold-address signature %s",
+                                item.signature,
+                            )
+                        else:
+                            service = WalletService(session)
+                            await service.process_deposit_signature(item.signature)
                         cursor = await _get_or_create_solana_cursor(session)
-                        cursor.last_signature = newest
+                        cursor.last_signature = item.signature
                         cursor.updated_at = datetime.now(UTC)
                         await session.commit()
-                    logger.info(
-                        "solana cursor bootstrapped at %s (%d prior sigs skipped)",
-                        newest,
-                        len(sigs),
-                    )
-                else:
-                    for item in sigs:
-                        async with session_factory() as session:
-                            if item.err is not None:
-                                logger.info(
-                                    "skipping failed cold-address signature %s",
-                                    item.signature,
-                                )
-                            else:
-                                service = WalletService(session)
-                                await service.process_deposit_signature(item.signature)
-                            cursor = await _get_or_create_solana_cursor(session)
-                            cursor.last_signature = item.signature
-                            cursor.updated_at = datetime.now(UTC)
-                            await session.commit()
         except asyncio.CancelledError:
             raise
         except Exception:
