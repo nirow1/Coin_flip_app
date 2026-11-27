@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     JWT_SESSION_MAX_DAYS: int = 30
     JWT_REFRESH_SECRET: SecretStr
     COOKIE_SECURE: bool = True
+    COOKIE_DOMAIN: str | None = None
     CORS_ORIGINS: str = "http://localhost:5173"
     REDIS_URL: str = "redis://localhost:6379/0"
 

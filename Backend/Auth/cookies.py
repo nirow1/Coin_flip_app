@@ -34,6 +34,7 @@ def set_csrf_cookie(response: Response, token: str) -> None:
         httponly=False,
         samesite="lax",
         secure=settings.COOKIE_SECURE,
+        domain=settings.COOKIE_DOMAIN or None,
         max_age=settings.JWT_EXPIRE_MINUTES * 60,
         path="/",
     )
@@ -57,4 +58,5 @@ def clear_auth_cookies(response: Response) -> None:
         path="/",
         samesite="lax",
         secure=settings.COOKIE_SECURE,
+        domain=settings.COOKIE_DOMAIN or None,
     )
